@@ -15,7 +15,7 @@ internal static class LocalizedTextRegistry
         Watch(label, WatchedProperty.Text);
     }
 
-    public static void Watch(BaseButton button)
+    public static void Watch(Button button)
     {
         Watch(button, WatchedProperty.Text);
         Watch(button, WatchedProperty.Tooltip);
@@ -90,7 +90,7 @@ internal static class LocalizedTextRegistry
         property switch
         {
             WatchedProperty.Text when control is Label label => label.Text,
-            WatchedProperty.Text when control is BaseButton button => button.Text,
+            WatchedProperty.Text when control is Button button => button.Text,
             WatchedProperty.Placeholder when control is LineEdit lineEdit => lineEdit.PlaceholderText,
             WatchedProperty.Tooltip => control.TooltipText,
             _ => "",
@@ -103,7 +103,7 @@ internal static class LocalizedTextRegistry
             case WatchedProperty.Text when control is Label label:
                 label.Text = value;
                 break;
-            case WatchedProperty.Text when control is BaseButton button:
+            case WatchedProperty.Text when control is Button button:
                 button.Text = value;
                 break;
             case WatchedProperty.Placeholder when control is LineEdit lineEdit:
