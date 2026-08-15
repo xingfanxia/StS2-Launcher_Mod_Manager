@@ -20,7 +20,7 @@ public static class Loc
 
     public static void Watch(Label label) => LocalizedTextRegistry.Watch(label);
 
-    public static void Watch(BaseButton button) => LocalizedTextRegistry.Watch(button);
+    public static void Watch(Button button) => LocalizedTextRegistry.Watch(button);
 
     public static void Watch(LineEdit lineEdit) => LocalizedTextRegistry.Watch(lineEdit);
 
