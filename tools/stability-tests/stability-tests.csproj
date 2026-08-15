@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile
+      Include="../../src/STS2Mobile/Launcher/Components/DialogCompletion.cs"
+      Link="DialogCompletion.cs"
+    />
+    <Compile
+      Include="../../src/STS2Mobile/Launcher/ShaderWarmupState.cs"
+      Link="ShaderWarmupState.cs"
+    />
+  </ItemGroup>
+</Project>

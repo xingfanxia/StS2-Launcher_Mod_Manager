@@ -71,7 +71,16 @@ if [ ! -f android/gradle/wrapper/gradle-wrapper.jar ]; then
     (cd android && gradle wrapper --gradle-version 8.13 --distribution-type bin)
 fi
 
+echo "Running focused stability and compatibility regressions..."
+dotnet run --project tools/stability-tests/stability-tests.csproj
+bash tools/stability-tests-java/run.sh
+bash tools/memberref-audit/tests/run.sh
+bash tools/patch-target-audit/tests/run.sh
+
 bash scripts/build.sh --no-bump
+
+# This existing regression project references the freshly built STS2Mobile.dll.
+dotnet run --project tools/workshop-sync-tests/workshop-sync-tests.csproj
 
 apk_path="$(find android/build/outputs/apk/mono/release -maxdepth 1 -type f -name '*.apk' -print -quit)"
 [ -n "$apk_path" ] || fail "Gradle completed without producing an APK"
