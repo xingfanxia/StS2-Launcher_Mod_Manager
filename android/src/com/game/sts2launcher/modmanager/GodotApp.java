@@ -3,6 +3,8 @@ package com.game.sts2launcher.modmanager;
 import org.godotengine.godot.Godot;
 import org.godotengine.godot.GodotActivity;
 
+import android.app.ActivityManager;
+import android.app.ApplicationExitInfo;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Build;
@@ -72,8 +74,11 @@ public class GodotApp extends GodotActivity {
 	private static final String KEYSTORE_ALIAS = "sts2mobile_credentials";
 	private static final String PCK_FILE = "SlayTheSpire2.pck";
 	private static final int REQ_SAF_ZIP = 4201;
+	private static final String LAST_REPORTED_EXIT_PREF = "last_reported_exit_timestamp";
+	private static final String PLANNED_EXIT_PREF = "planned_exit_requested_at";
 
 	private volatile boolean pickerActive = false;
+	private final List<File> stagedAtlasCacheDirs = new ArrayList<>();
 	private final java.util.List<String> lastPickedZipPaths =
 			java.util.Collections.synchronizedList(new java.util.ArrayList<>());
 
@@ -118,6 +123,7 @@ public class GodotApp extends GodotActivity {
 
 		// Must be called before any native FMOD calls.
 		FMOD.init(this);
+		queueOrphanedAtlasCacheDirs();
 
 		// Debug-only: convert intent extras into marker files that the C# side
 		// picks up after the launcher UI is up, to force-show specific dialogs
@@ -147,6 +153,8 @@ public class GodotApp extends GodotActivity {
 		extractAssetFile("FMOD_LOGOS/FMOD Logo White - Transparent Background.png", "fmod_logo.png");
 
 		super.onCreate(savedInstanceState);
+		startPreviousExitReport();
+		startStagedAtlasCleanup();
 
 		if (wipingAtlas) {
 			showAtlasWipeOverlay();
@@ -248,13 +256,18 @@ public class GodotApp extends GodotActivity {
 		}
 		String reason = manualTriggered ? "manual" : "auto/PCK-changed";
 		Log.i(TAG, "[AtlasWipe] Triggered (" + reason + ")");
-		int total = wipeAtlasCacheDirs();
-		if (manualTriggered && !manualMarker.delete()) {
+		boolean fullyStaged = stageAtlasCacheDirs();
+		if (manualTriggered && fullyStaged && !manualMarker.delete()) {
 			Log.w(TAG, "[AtlasWipe] failed to clear .atlas_wipe_pending — may re-fire");
 		}
-		recordPckMtime();
-		Log.i(TAG, "[AtlasWipe] Done — " + total + " entries removed (" + reason + ")");
-		return total > 0;
+		if (fullyStaged) {
+			recordPckMtime();
+		} else {
+			Log.w(TAG, "[AtlasWipe] staging incomplete — trigger preserved for next boot");
+		}
+		Log.i(TAG, "[AtlasWipe] Staged " + stagedAtlasCacheDirs.size()
+				+ " cache directories for background deletion (" + reason + ")");
+		return !stagedAtlasCacheDirs.isEmpty();
 	}
 
 	// Compares current PCK mtime to the last recorded stamp. First-run (no
@@ -301,8 +314,9 @@ public class GodotApp extends GodotActivity {
 	// On mobile the atlas cache lives at etc2_cache/.godot/imported/ (the
 	// mobile-specific ETC2/BPTC compressed texture cache), NOT the standard
 	// .godot/imported/ — the latter is empty on this build. Wipe both for safety.
-	private int wipeAtlasCacheDirs() {
-		int total = 0;
+	private boolean stageAtlasCacheDirs() {
+		boolean fullyStaged = true;
+		String suffix = Long.toString(System.currentTimeMillis());
 		String[] candidates = {
 				".godot/imported",
 				"etc2_cache/.godot/imported",
@@ -312,12 +326,50 @@ public class GodotApp extends GodotActivity {
 			if (!dir.exists()) {
 				continue;
 			}
-			int[] counter = new int[]{0};
-			deleteRecursive(dir, counter);
-			total += counter[0];
-			Log.i(TAG, "[AtlasWipe] " + rel + " — " + counter[0] + " entries");
+			try {
+				File staged = StartupCacheWiper.stageForDeletion(dir, suffix);
+				if (staged != null) {
+					stagedAtlasCacheDirs.add(staged);
+					Log.i(TAG, "[AtlasWipe] staged " + rel + " -> " + staged.getName());
+				}
+			} catch (IOException ex) {
+				fullyStaged = false;
+				Log.e(TAG, "[AtlasWipe] failed to stage " + rel, ex);
+			}
 		}
-		return total;
+		return fullyStaged;
+	}
+
+	private void queueOrphanedAtlasCacheDirs() {
+		String[] candidates = {
+				".godot/imported",
+				"etc2_cache/.godot/imported",
+		};
+		for (String rel : candidates) {
+			File active = new File(getFilesDir(), rel);
+			for (File orphan : StartupCacheWiper.findStagedSiblings(active)) {
+				if (!stagedAtlasCacheDirs.contains(orphan)) stagedAtlasCacheDirs.add(orphan);
+			}
+		}
+		if (!stagedAtlasCacheDirs.isEmpty()) {
+			Log.i(TAG, "[AtlasWipe] Found " + stagedAtlasCacheDirs.size()
+					+ " staged cache directories awaiting background cleanup");
+		}
+	}
+
+	private void startStagedAtlasCleanup() {
+		if (stagedAtlasCacheDirs.isEmpty()) return;
+		List<File> pending = new ArrayList<>(stagedAtlasCacheDirs);
+		stagedAtlasCacheDirs.clear();
+		Thread cleanup = new Thread(() -> {
+			int total = 0;
+			for (File dir : pending) {
+				total += StartupCacheWiper.deleteRecursively(dir);
+			}
+			Log.i(TAG, "[AtlasWipe] Background cleanup removed " + total + " entries");
+		}, "sts2-atlas-cleanup");
+		cleanup.setDaemon(true);
+		cleanup.start();
 	}
 
 	// Native loading overlay shown while ETC2 re-import runs (~30–60s on first
@@ -815,6 +867,7 @@ public class GodotApp extends GodotActivity {
 
 	public void restartApp() {
 		Log.i(TAG, "Restarting app...");
+		recordPlannedExit();
 		Intent intent = getPackageManager().getLaunchIntentForPackage(getPackageName());
 		if (intent != null) {
 			intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
@@ -828,10 +881,108 @@ public class GodotApp extends GodotActivity {
 	// (issue #44 의 (2) per-file 비교) → 정상 부팅.
 	public void exitApp() {
 		Log.i(TAG, "[exitApp] User-initiated restart — finishing affinity and exiting process");
+		recordPlannedExit();
 		runOnUiThread(() -> {
 			finishAffinity();
 			Runtime.getRuntime().exit(0);
 		});
+	}
+
+	private void recordPlannedExit() {
+		getSharedPreferences("sts2mobile", MODE_PRIVATE)
+				.edit()
+				.putLong(PLANNED_EXIT_PREF, System.currentTimeMillis())
+				.commit();
+	}
+
+	private void startPreviousExitReport() {
+		Thread reporter = new Thread(this::reportPreviousProcessExits, "sts2-previous-exit");
+		reporter.setDaemon(true);
+		reporter.start();
+	}
+
+	// Self-PID logcat ends with the process, so native crashes, LMK and ANRs often
+	// leave no causal tail in the launcher's own log. Android 11+ retains the
+	// system-classified previous exit; report it once on the next successful boot.
+	private void reportPreviousProcessExits() {
+		if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+			Log.i(TAG, "[PreviousExit] unavailable below Android 11");
+			return;
+		}
+
+		SharedPreferences prefs = getSharedPreferences("sts2mobile", MODE_PRIVATE);
+		long lastReported = prefs.getLong(LAST_REPORTED_EXIT_PREF, 0L);
+		long plannedAt = prefs.getLong(PLANNED_EXIT_PREF, 0L);
+		long newestSeen = lastReported;
+		boolean consumedPlannedMarker = false;
+
+		try {
+			ActivityManager manager = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+			if (manager == null) {
+				Log.w(TAG, "[PreviousExit] ActivityManager unavailable");
+				return;
+			}
+
+			List<ApplicationExitInfo> exits = manager.getHistoricalProcessExitReasons(
+					getPackageName(), 0, 5);
+			for (ApplicationExitInfo info : exits) {
+				long timestamp = info.getTimestamp();
+				if (timestamp <= lastReported) continue;
+
+				newestSeen = Math.max(newestSeen, timestamp);
+				boolean planned = PreviousExitClassifier.isPlannedExit(
+						info.getReason(), timestamp, plannedAt);
+				consumedPlannedMarker |= planned;
+				String description = info.getDescription();
+				Log.w(TAG, "[PreviousExit] time=" + timestamp
+						+ " process=" + info.getProcessName()
+						+ " reason=" + PreviousExitClassifier.reasonLabel(info.getReason())
+						+ " planned=" + planned
+						+ " status=" + info.getStatus()
+						+ " importance=" + info.getImportance()
+						+ " pssKb=" + info.getPss()
+						+ " rssKb=" + info.getRss()
+						+ (description == null ? "" : " description=" + description));
+
+				if (info.getReason() == ApplicationExitInfo.REASON_ANR) {
+					logPreviousAnrTrace(info);
+				}
+			}
+
+			SharedPreferences.Editor editor = prefs.edit();
+			if (newestSeen > lastReported) {
+				editor.putLong(LAST_REPORTED_EXIT_PREF, newestSeen);
+			}
+			if (consumedPlannedMarker
+					|| (plannedAt > 0L && System.currentTimeMillis() - plannedAt > 120_000L)) {
+				editor.remove(PLANNED_EXIT_PREF);
+			}
+			editor.apply();
+		} catch (Exception ex) {
+			Log.w(TAG, "[PreviousExit] query failed", ex);
+		}
+	}
+
+	private void logPreviousAnrTrace(ApplicationExitInfo info) {
+		try (InputStream trace = info.getTraceInputStream()) {
+			if (trace == null) {
+				Log.w(TAG, "[PreviousExit/ANR] system trace unavailable");
+				return;
+			}
+			try (BufferedReader reader = new BufferedReader(new InputStreamReader(trace))) {
+				String line = null;
+				int lineCount = 0;
+				while (lineCount < 40 && (line = reader.readLine()) != null) {
+					Log.w(TAG, "[PreviousExit/ANR] " + line);
+					lineCount++;
+				}
+				if (lineCount == 40 && reader.readLine() != null) {
+					Log.w(TAG, "[PreviousExit/ANR] ... trace truncated ...");
+				}
+			}
+		} catch (IOException ex) {
+			Log.w(TAG, "[PreviousExit/ANR] failed to read trace", ex);
+		}
 	}
 
 	// AES-256-GCM encryption via Android Keystore (hardware-backed TEE).
