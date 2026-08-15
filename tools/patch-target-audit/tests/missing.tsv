@@ -1,0 +1,2 @@
+# severity	kind	type	member	arity	requires
+required	method	GameContract.PatchTarget	Missing	bare	-

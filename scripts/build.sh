@@ -23,7 +23,17 @@ dotnet publish -c Release
 
 PUBLISH_DIR="$PATCHER_DIR/bin/Release/net9.0/publish"
 BCL_DIR="$BUILD_DIR/assets/dotnet_bcl"
+TARGET_STS2_DLL="$ROOT/upstream/godot-export/.godot/mono/publish/arm64/sts2.dll"
 mkdir -p "$BCL_DIR"
+
+# Fail the real APK path before Gradle packaging if the game DLL no longer
+# satisfies either compile-time/interface contracts or string-based Harmony /
+# reflection targets. Running these tools manually is not a release guard.
+echo "Auditing game compatibility..."
+dotnet run --project "$ROOT/tools/memberref-audit/audit.csproj" -c Release -- \
+    "$PUBLISH_DIR/STS2Mobile.dll" "$TARGET_STS2_DLL"
+dotnet run --project "$ROOT/tools/patch-target-audit/audit.csproj" -c Release -- \
+    "$TARGET_STS2_DLL" "$ROOT/tools/patch-target-audit/sts2-targets.tsv"
 
 cp "$PUBLISH_DIR"/STS2Mobile.dll "$PUBLISH_DIR"/SteamKit2.dll \
    "$PUBLISH_DIR"/protobuf-net.dll "$PUBLISH_DIR"/protobuf-net.Core.dll \

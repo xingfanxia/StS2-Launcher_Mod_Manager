@@ -4,7 +4,7 @@
     <TargetFramework>net9.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <AssemblyName>audit</AssemblyName>
+    <AssemblyName>patch-target-audit</AssemblyName>
   </PropertyGroup>
   <ItemGroup>
     <Compile Remove="tests/**/*.cs" />

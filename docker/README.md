@@ -7,6 +7,11 @@ isolated copy of the checkout. The image contains only the public toolchain;
 the build script is always read from the mounted checkout at
 `/src/docker/build-apk.sh`.
 
+Before Gradle packages the APK, `scripts/build.sh` runs both the MemberRef /
+implemented-interface audit and the independent reflection/Harmony target
+audit against the private `sts2.dll`. A required compatibility mismatch fails
+the build instead of becoming a Play-time black screen.
+
 ## Dependency directory
 
 Mount a private directory at `/deps` with this layout:

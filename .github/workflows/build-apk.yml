@@ -10,6 +10,7 @@ on:
       - "docker/**"
       - "scripts/**"
       - "src/**"
+      - "tools/**"
   workflow_dispatch:
 
 concurrency:

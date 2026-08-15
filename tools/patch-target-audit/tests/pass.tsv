@@ -1,0 +1,4 @@
+# severity	kind	type	member	arity	requires
+required	method	GameContract.PatchTarget	Present	bare	-
+required	il-call	GameContract.PatchTarget	Present	0	GameContract.PatchTarget::Helper
+optional	method	GameContract.PatchTarget	OptionalFutureMethod	bare	-
