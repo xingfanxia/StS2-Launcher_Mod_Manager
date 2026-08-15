@@ -18,5 +18,6 @@ public class StyledLabel : Label
         // the row the tap lands.
         MouseFilter = MouseFilterEnum.Ignore;
         AddThemeFontSizeOverride("font_size", (int)(fontSize * scale));
+        Loc.Watch(this);
     }
 }

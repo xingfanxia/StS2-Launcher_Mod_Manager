@@ -39,6 +39,7 @@ public class StyledButton : Button
         CustomMinimumSize = new Vector2(0, Ui.S(scale, height));
         AddThemeFontSizeOverride("font_size", Ui.S(scale, fontSize));
         ApplyVariant(scale, variant);
+        Loc.Watch(this);
     }
 
     public void ApplyVariant(float scale, ButtonVariant variant)

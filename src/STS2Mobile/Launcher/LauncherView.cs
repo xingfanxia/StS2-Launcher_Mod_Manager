@@ -204,6 +204,8 @@ public class LauncherView
         logTitle.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
         logHeader.AddChild(logTitle);
 
+        logHeader.AddChild(new LanguageToggle(scale, SetStatus));
+
         DebugButton = new StyledButton("Debug: OFF", scale, fontSize: 11, height: 28);
         DebugButton.CustomMinimumSize = new Vector2(
             (int)(110 * scale),
