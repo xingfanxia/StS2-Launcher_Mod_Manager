@@ -209,7 +209,24 @@ public static class ModEntry
 
         var launcher = new LauncherUI();
         tree.Root.AddChild(launcher);
-        launcher.Initialize();
+        if (!launcher.Initialize())
+        {
+            PatchHelper.Log("Standalone launcher initialization failed; showing explicit error");
+            LauncherModel.GetGodotApp()?.Call("hideLoadingOverlay");
+            try
+            {
+                OS.Alert(
+                    "The launcher UI could not initialize. Restart the app and attach the launcher log when reporting this issue.",
+                    "Launcher initialization failed"
+                );
+            }
+            catch (Exception ex)
+            {
+                PatchHelper.Log($"Failed to show launcher initialization alert: {ex.Message}");
+            }
+            launcher.QueueFree();
+            return;
+        }
         PatchHelper.Log("Standalone launcher displayed");
     }
 }

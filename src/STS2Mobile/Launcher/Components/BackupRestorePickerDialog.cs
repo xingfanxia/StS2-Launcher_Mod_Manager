@@ -17,11 +17,9 @@ namespace STS2Mobile.Launcher.Components;
 // fixed 6-row-or-fewer lists.
 public class BackupRestorePickerDialog : ColorRect
 {
-    private readonly TaskCompletionSource<LocalBackupService.SnapshotInfo> _result = new(
-        TaskCreationOptions.RunContinuationsAsynchronously
-    );
+    private readonly DialogCompletion<LocalBackupService.SnapshotInfo> _completion = new(null);
 
-    public Task<LocalBackupService.SnapshotInfo> Result => _result.Task;
+    public Task<LocalBackupService.SnapshotInfo> Result => _completion.Task;
 
     private struct DialogSizing
     {
@@ -62,6 +60,7 @@ public class BackupRestorePickerDialog : ColorRect
     )
     {
         ModalGate.Register(this);
+        TreeExiting += _completion.CompleteFallback;
 
         var sz = ResolveSizing(viewportHeight);
 
@@ -133,8 +132,8 @@ public class BackupRestorePickerDialog : ColorRect
 
     private void Resolve(LocalBackupService.SnapshotInfo snap)
     {
+        _completion.Complete(snap);
         QueueFree();
-        _result.TrySetResult(snap);
     }
 
     private static Control BuildRow(

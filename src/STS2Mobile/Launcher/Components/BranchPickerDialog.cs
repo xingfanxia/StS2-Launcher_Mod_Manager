@@ -15,6 +15,8 @@ public class BranchPickerDialog : ColorRect
     public event Action<string> BranchConfirmed;
     public event Action Cancelled;
 
+    private bool _resolved;
+
     // Issue #23 — secondary footer button. Surfaces the manual atlas-cache wipe
     // path for users hitting carded/relic/potion image-index regression after a
     // game update. The dialog closes itself before raising the event; the
@@ -27,6 +29,9 @@ public class BranchPickerDialog : ColorRect
         float scale
     )
     {
+        ModalGate.Register(this);
+        TreeExiting += FireCancelled;
+
         SetAnchorsPreset(LayoutPreset.FullRect);
         Color = new Color(0, 0, 0, 0.6f);
 
@@ -96,8 +101,8 @@ public class BranchPickerDialog : ColorRect
         );
         cancelButton.Pressed += () =>
         {
+            FireCancelled();
             QueueFree();
-            Cancelled?.Invoke();
         };
         buttonRow.AddChild(cancelButton);
 
@@ -107,11 +112,11 @@ public class BranchPickerDialog : ColorRect
         {
             var pressed = group.GetPressedButton();
             var picked = pressed?.GetMeta("branch").AsString();
-            QueueFree();
             if (!string.IsNullOrEmpty(picked))
-                BranchConfirmed?.Invoke(picked);
+                CompleteBranch(picked);
             else
-                Cancelled?.Invoke();
+                FireCancelled();
+            QueueFree();
         };
         buttonRow.AddChild(okButton);
 
@@ -127,13 +132,30 @@ public class BranchPickerDialog : ColorRect
         atlasButton.TooltipText = "포션 / 카드 / 유물 이미지가 잘못 표시될 때 사용";
         atlasButton.Pressed += () =>
         {
-            QueueFree();
+            _resolved = true;
             AtlasWipeRequested?.Invoke();
+            QueueFree();
         };
         helperRow.AddChild(atlasButton);
 
         center.AddChild(dialogBox);
         AddChild(center);
+    }
+
+    private void CompleteBranch(string branch)
+    {
+        if (_resolved)
+            return;
+        _resolved = true;
+        BranchConfirmed?.Invoke(branch);
+    }
+
+    private void FireCancelled()
+    {
+        if (_resolved)
+            return;
+        _resolved = true;
+        Cancelled?.Invoke();
     }
 
     private static Control BuildRow(

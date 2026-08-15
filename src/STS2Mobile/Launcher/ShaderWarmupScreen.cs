@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Godot;
@@ -16,7 +15,8 @@ public class ShaderWarmupScreen : Control
     private const int WarmupVersion = 5;
     private const int BatchSize = 8;
 
-    private TaskCompletionSource<bool> _tcs;
+    private readonly ShaderWarmupOperation _operation = new();
+    private readonly ShaderWarmupState _state = new(OS.GetUserDataDir(), WarmupVersion);
     private float _scale;
     private Label _statusLabel;
     private Label _detailLabel;
@@ -26,44 +26,31 @@ public class ShaderWarmupScreen : Control
     {
         try
         {
-            var markerPath = Path.Combine(OS.GetUserDataDir(), "shader_warmup_version");
-            if (File.Exists(markerPath))
-            {
-                var content = File.ReadAllText(markerPath).Trim();
-                if (content == WarmupVersion.ToString())
-                {
-                    PatchHelper.Log(
-                        $"[ShaderWarmup] NeedsWarmup=false (marker v{content} matches)"
-                    );
-                    return false;
-                }
+            var check = new ShaderWarmupState(OS.GetUserDataDir(), WarmupVersion).Check();
+            PatchHelper.Log($"[ShaderWarmup] NeedsWarmup={check.NeedsWarmup} ({check.Reason})");
+            if (check.RecoveredInterruptedAttempt)
                 PatchHelper.Log(
-                    $"[ShaderWarmup] NeedsWarmup=true (marker v{content} != v{WarmupVersion})"
+                    "[ShaderWarmup] Previous attempt was interrupted; skipping this optional warmup version"
                 );
-            }
-            else
-            {
-                PatchHelper.Log("[ShaderWarmup] NeedsWarmup=true (no marker file)");
-            }
-
-            return true;
+            return check.NeedsWarmup;
         }
         catch (Exception ex)
         {
             PatchHelper.Log($"[ShaderWarmup] NeedsWarmup check failed: {ex.Message}");
-            return true;
+            // Warmup is an optimization. If durable state is unavailable, running
+            // it would repeat on every boot and can create an unrecoverable loop.
+            return false;
         }
     }
 
-    public Task WaitForCompletion()
-    {
-        _tcs = new TaskCompletionSource<bool>();
-        return _tcs.Task;
-    }
+    public Task<bool> WaitForCompletion() => _operation.Completion;
 
     public void Initialize()
     {
         ZIndex = 100;
+        // If the scene tree removes this screen during a lifecycle/configuration
+        // teardown, release the caller instead of leaving its launch Task pending.
+        TreeExiting += () => _operation.Complete(restartRequired: false);
 
         try
         {
@@ -71,12 +58,13 @@ public class ShaderWarmupScreen : Control
             SetAnchorsPreset(LayoutPreset.FullRect);
             Size = vpSize;
             BuildUI();
+            _state.Begin();
             PatchHelper.Log("[ShaderWarmup] Screen initialized");
         }
         catch (Exception ex)
         {
-            PatchHelper.Log($"[ShaderWarmup] BuildUI failed: {ex}");
-            _tcs?.TrySetResult(false);
+            PatchHelper.Log($"[ShaderWarmup] Initialization failed: {ex}");
+            _operation.Complete(restartRequired: false);
             return;
         }
 
@@ -128,10 +116,7 @@ public class ShaderWarmupScreen : Control
 
             if (materials.Count == 0)
             {
-                WriteVersionMarker();
-                // Static type initializers (e.g. NPotionHolder) poisoned by early LocString access
-                // can't be retried in-process; restart to get a clean AppDomain.
-                LauncherModel.GetGodotApp()?.Call("restartApp");
+                CompleteStateAndSignalRestart();
                 return;
             }
 
@@ -194,8 +179,6 @@ public class ShaderWarmupScreen : Control
                 $"[ShaderWarmup] Completed: {total} materials in {sw.ElapsedMilliseconds}ms"
             );
 
-            WriteVersionMarker();
-
             await ToSignal(GetTree().CreateTimer(0.5), SceneTreeTimer.SignalName.Timeout);
         }
         catch (Exception ex)
@@ -203,9 +186,25 @@ public class ShaderWarmupScreen : Control
             PatchHelper.Log($"[ShaderWarmup] Failed: {ex}");
         }
 
-        // Restart to get a clean AppDomain so GameStartup() runs with fresh type initializers.
-        // See the early-return branch above for the rationale.
-        LauncherModel.GetGodotApp()?.Call("restartApp");
+        CompleteStateAndSignalRestart();
+    }
+
+    private void CompleteStateAndSignalRestart()
+    {
+        try
+        {
+            // Even a managed scan failure completes this optional warmup version.
+            // The clean process after restart will compile missed shaders on demand
+            // instead of entering a deterministic restart loop.
+            _state.Complete();
+            _operation.Complete(restartRequired: true);
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log($"[ShaderWarmup] Failed to persist completion: {ex.Message}");
+            // Without durable completion a restart would repeat the same warmup.
+            _operation.Complete(restartRequired: false);
+        }
     }
 
     private static Node CreateWarmupNode(Material mat, ImageTexture whiteTex)
@@ -246,10 +245,10 @@ public class ShaderWarmupScreen : Control
         {
             try
             {
-                var packed = ResourceLoader.Load<PackedScene>(
+                using var packed = ResourceLoader.Load<PackedScene>(
                     scenePaths[i],
                     null,
-                    ResourceLoader.CacheMode.Reuse
+                    ResourceLoader.CacheMode.IgnoreDeep
                 );
                 if (packed != null)
                     ExtractMaterialsFromSceneState(packed, scenePaths[i], materials);
@@ -342,7 +341,7 @@ public class ShaderWarmupScreen : Control
                             ResourceLoader.Load(
                                 cleanPath,
                                 "Material",
-                                ResourceLoader.CacheMode.Reuse
+                                ResourceLoader.CacheMode.IgnoreDeep
                             ) as Material;
                         if (mat != null)
                             materials[cleanPath] = mat;
@@ -352,7 +351,7 @@ public class ShaderWarmupScreen : Control
                                 ResourceLoader.Load(
                                     cleanPath,
                                     "Shader",
-                                    ResourceLoader.CacheMode.Reuse
+                                    ResourceLoader.CacheMode.IgnoreDeep
                                 ) as Shader;
                             if (shader != null)
                             {
@@ -364,7 +363,11 @@ public class ShaderWarmupScreen : Control
                         continue;
                     }
 
-                    var res = ResourceLoader.Load(cleanPath, null, ResourceLoader.CacheMode.Reuse);
+                    var res = ResourceLoader.Load(
+                        cleanPath,
+                        null,
+                        ResourceLoader.CacheMode.IgnoreDeep
+                    );
                     if (res is Material resMat)
                     {
                         materials[cleanPath] = resMat;
@@ -475,19 +478,6 @@ public class ShaderWarmupScreen : Control
                     );
                 }
             }
-        }
-    }
-
-    private static void WriteVersionMarker()
-    {
-        try
-        {
-            var markerPath = Path.Combine(OS.GetUserDataDir(), "shader_warmup_version");
-            File.WriteAllText(markerPath, WarmupVersion.ToString());
-        }
-        catch (Exception ex)
-        {
-            PatchHelper.Log($"[ShaderWarmup] Failed to write version marker: {ex.Message}");
         }
     }
 }

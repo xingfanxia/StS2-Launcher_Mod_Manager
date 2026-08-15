@@ -48,7 +48,9 @@ public class LauncherModel : IDisposable
         {
             _inGameMode = value;
             if (value && _launchTcs == null)
-                _launchTcs = new TaskCompletionSource<bool>();
+                _launchTcs = new TaskCompletionSource<bool>(
+                    TaskCreationOptions.RunContinuationsAsynchronously
+                );
         }
     }
     public string AccountName => _credentialStore.AccountName;
@@ -90,9 +92,11 @@ public class LauncherModel : IDisposable
         _credentialStore = new SteamCredentialStore(dataDir);
     }
 
-    public Task WaitForLaunch()
+    public Task<bool> WaitForLaunch()
     {
-        _launchTcs ??= new TaskCompletionSource<bool>();
+        _launchTcs ??= new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
         return _launchTcs.Task;
     }
 
@@ -189,7 +193,9 @@ public class LauncherModel : IDisposable
             {
                 AwaitingCode = true;
                 CodeNeeded?.Invoke(wasIncorrect);
-                _codeTcs = new TaskCompletionSource<string>();
+                _codeTcs = new TaskCompletionSource<string>(
+                    TaskCreationOptions.RunContinuationsAsynchronously
+                );
                 var code = await _codeTcs.Task;
 
                 if (_auth.NeedsReconnectForAuth)
@@ -456,10 +462,15 @@ public class LauncherModel : IDisposable
 
     public void Dispose()
     {
+        // An unexpected parent/configuration teardown must release every caller
+        // awaiting this UI. A normal PLAY already completed the launch gate true,
+        // so the one-shot false fallback cannot overwrite it.
+        _launchTcs?.TrySetResult(false);
+        _codeTcs?.TrySetCanceled();
         _downloadCts?.Cancel();
         _downloader?.Dispose();
         _auth?.Dispose();
-        if (_launchTcs == null)
+        if (_launchTcs?.Task is not { IsCompletedSuccessfully: true, Result: true })
             _connection?.Dispose();
     }
 

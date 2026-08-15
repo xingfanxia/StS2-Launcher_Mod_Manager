@@ -180,14 +180,38 @@ public static class LauncherPatches
         var launcher = new LauncherUI();
         gameNode.AddChild(launcher);
         launcher.SetGameMode(true);
-        launcher.Initialize();
-        PatchHelper.Log("Launcher UI displayed");
+        bool userLaunched = false;
+        if (launcher.Initialize())
+        {
+            PatchHelper.Log("Launcher UI displayed");
+            if (await launcher.WaitForLaunch())
+            {
+                userLaunched = true;
+                PatchHelper.Log("User launched game, proceeding to startup...");
+            }
+            else
+                PatchHelper.Log(
+                    "Launcher was removed before PLAY; continuing in local-safe game mode"
+                );
+        }
+        else
+        {
+            // The launcher is optional once valid game files are already loaded.
+            // A half-initialized UI cannot produce PLAY, so fail open to the game
+            // instead of leaving a blank Control or faulting on a null model.
+            PatchHelper.Log("Launcher initialization failed; bypassing launcher for this boot");
+        }
+        if (!userLaunched)
+        {
+            // A fallback handoff is for availability only; it is not user consent
+            // to perform the normal pre-PLAY cloud handshake or conflict writes.
+            CloudSyncEnabled = false;
+            _cloudCacheReady = false;
+            PatchHelper.Log("Launcher fallback forced local-only mode for this session");
+        }
         // Issue #23 — dismiss the native ETC2-rebuild overlay if it was shown
         // during this boot. No-op when overlay was never installed.
         LauncherModel.GetGodotApp()?.Call("hideLoadingOverlay");
-
-        await launcher.WaitForLaunch();
-        PatchHelper.Log("User launched game, proceeding to startup...");
 
         var instanceField = typeof(SaveManager).GetField(
             "_instance",
@@ -272,9 +296,33 @@ public static class LauncherPatches
         {
             var warmup = new ShaderWarmupScreen();
             gameNode.AddChild(warmup);
+            var completion = warmup.WaitForCompletion();
             warmup.Initialize();
-            await warmup.WaitForCompletion();
+            bool restartRequired = await completion;
             warmup.QueueFree();
+
+            if (restartRequired)
+            {
+                // Warmup can touch localization-backed static constructors before
+                // settings initialization. Restart from a clean AppDomain, but only
+                // after the operation has completed and persisted its state; the
+                // await no longer relies on Runtime.exit() terminating the process.
+                PatchHelper.Log("[ShaderWarmup] Restarting with completed warmup state");
+                var app = LauncherModel.GetGodotApp();
+                if (app != null)
+                {
+                    app.Call("restartApp");
+                    PatchHelper.Log(
+                        "[ShaderWarmup] restartApp returned unexpectedly; continuing startup"
+                    );
+                }
+                else
+                {
+                    PatchHelper.Log(
+                        "[ShaderWarmup] Android restart bridge unavailable; continuing startup"
+                    );
+                }
+            }
         }
 
         SaveManager.Instance.InitSettingsData();
