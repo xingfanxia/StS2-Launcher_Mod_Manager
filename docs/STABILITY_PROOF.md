@@ -1,8 +1,9 @@
 # Launcher stability proof
 
-Status: **partial** on 2026-08-15. All locally executable proof below passes,
-but no ARM64 Android device is connected, so the `GOAL.md` Device Matrix is not
-complete and the stability goal must not be marked complete.
+Status: **partial** on 2026-08-15. All locally executable proof below passes.
+An ARM64 API 36 emulator is available, but no physical Android device is
+connected, so the `GOAL.md` Device Matrix is not complete and the stability goal
+must not be marked complete.
 
 ## Evidence and causal conclusions
 
@@ -45,6 +46,8 @@ latest run passed:
   whole-launcher teardown contracts, and build-gate contracts.
 - `tools/stability-tests-java`: prior-exit classification and atomic cache
   staging/background cleanup, including interrupted cleanup recovery.
+- `tools/device-stability/tests/run.sh`: physical-device gating, package-state
+  detection, bounded optional log capture, and a static no-mutation contract.
 - `tools/memberref-audit/tests/run.sh`: a broken newer interface fixture is
   rejected and a virtual forward-compatible implementation passes.
 - `tools/patch-target-audit/tests/run.sh`: present and IL-call rules pass;
@@ -85,11 +88,12 @@ docker run --rm --platform linux/amd64 \
 
 ## APK artifact
 
-The private build output is intentionally outside the repository:
+The last completed private build output is intentionally outside the
+repository:
 
 ```text
-~/Library/Caches/StS2LauncherBuildDeps/full/out-goal-proof/StS2Launcher-v0.4.2.apk
-SHA-256 80f48e228d44568afc0fec443141b4af79396372eab361776f3721070c61590b
+~/Library/Caches/StS2LauncherBuildDeps/full/out-goal-proof2/StS2Launcher-v0.4.2.apk
+SHA-256 d2fc9b9501b3bc96ffa7c69dbc9650559a37110b40294d586677cd2297cd7141
 package  com.game.sts2launcher.modmanager
 version  0.4.2 (339)
 min/target SDK 24/35
@@ -99,11 +103,27 @@ min/target SDK 24/35
 authorized launcher signing identity is available; no private game, FMOD, or
 signing input is committed or uploaded.
 
+A later repeat passed every focused test and both compatibility audits, then
+made no progress for more than four minutes in Gradle
+`stripMonoReleaseDebugSymbols`: its translated `llvm-strip` child was defunct
+and the daemon threads were waiting in runtime mutexes. The ephemeral container
+was stopped and that run is not counted as a build pass. This is consistent
+with an amd64-on-Apple-Silicon translation stall; it produced no compiler or
+launcher failure. The final device-tool changes were rerun independently and
+pass, while the completed full APK above remains the build proof.
+
 ## Device proof still required
 
-`adb devices -l` and `adb mdns services` both return no devices. The next
-discriminating run must therefore install a correctly signed artifact on an
-ARM64 device and execute every Device Matrix row in `GOAL.md`, especially:
+The local `mio_api36_pixel8` AVD boots as API 36 / ARM64 (`ranchu`) and confirms
+that `ApplicationExitInfo` is queryable. A read-only preflight from
+`tools/device-stability/capture.sh --require-physical` correctly records the
+package as absent, classifies the AVD as an emulator, and exits 3. This is useful
+tool validation, not physical-device proof.
+
+The artifact cannot be installed because it is unsigned, and creating or using
+a different signing identity requires new authorization under `GOAL.md`. The
+next discriminating run must use an authorized, correctly signed artifact on an
+ARM64 physical device and execute every Device Matrix row, especially:
 
 - fresh install, upgrade with a large existing ETC2 cache, and a kill during
   background cache cleanup;
@@ -130,3 +150,10 @@ language-toggle code changed. Build enforcement is localized to
 `scripts/build.sh`, `docker/build-apk.sh`, and the existing APK workflow. The
 changes can be cherry-picked/reverted by failure class without a broad launcher
 architecture rewrite.
+
+As a direct portability check, the two runtime-fix commits cherry-pick cleanly
+onto upstream `59a5b87` (v0.4.2). The compatibility/proof commits have no
+upstream source-line conflicts; their only apply decisions are fork-owned CI,
+Docker, and proof files that do not exist upstream. With this final focused
+device-proof commit, the fork is 12 commits ahead and 0 behind that upstream
+snapshot. No remote branch was changed.

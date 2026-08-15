@@ -74,6 +74,7 @@ fi
 echo "Running focused stability and compatibility regressions..."
 dotnet run --project tools/stability-tests/stability-tests.csproj
 bash tools/stability-tests-java/run.sh
+bash tools/device-stability/tests/run.sh
 bash tools/memberref-audit/tests/run.sh
 bash tools/patch-target-audit/tests/run.sh
 
