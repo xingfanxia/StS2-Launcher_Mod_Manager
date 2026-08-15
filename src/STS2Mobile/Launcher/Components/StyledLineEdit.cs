@@ -33,5 +33,6 @@ public class StyledLineEdit : LineEdit
         AddThemeColorOverride("font_color", Ui.TextPrimary);
         AddThemeColorOverride("font_placeholder_color", Ui.TextDisabled);
         AddThemeColorOverride("caret_color", Ui.Accent);
+        Loc.Watch(this);
     }
 }
