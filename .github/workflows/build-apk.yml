@@ -1,0 +1,165 @@
+name: Build APK
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/build-apk.yml"
+      - "android/**"
+      - "docker/**"
+      - "scripts/**"
+      - "src/**"
+  workflow_dispatch:
+
+concurrency:
+  group: apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  toolchain:
+    name: Prepare build toolchain
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.image.outputs.ref }}
+
+    steps:
+      - name: Check out trusted main
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Select immutable image tag
+        id: image
+        run: |
+          set -euo pipefail
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          dockerfile_sha="$(sha256sum docker/Dockerfile | cut -d ' ' -f 1)"
+          echo "ref=ghcr.io/$owner/sts2-launcher-build:$dockerfile_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GitHub Container Registry
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "${{ github.actor }}" --password-stdin
+
+      - name: Build and publish toolchain when missing
+        env:
+          IMAGE: ${{ steps.image.outputs.ref }}
+        run: |
+          set -euo pipefail
+          if docker manifest inspect "$IMAGE" >/dev/null 2>&1; then
+            echo "Reusing $IMAGE"
+            exit 0
+          fi
+
+          docker build \
+            --platform linux/amd64 \
+            --pull \
+            --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            --tag "$IMAGE" \
+            docker
+          docker push "$IMAGE"
+
+      - name: Log out of GitHub Container Registry
+        if: always()
+        run: docker logout ghcr.io || true
+
+  build:
+    name: Build APK
+    if: github.ref == 'refs/heads/main'
+    needs: toolchain
+    runs-on: [self-hosted, Linux, X64, sts2-apk]
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+    env:
+      STS2_DEPS_DIR: /srv/sts2-launcher-build/req_files
+      STS2_BUILD_CACHE_DIR: /home/sts2-ci/.cache/sts2-launcher-build
+
+    steps:
+      - name: Check out trusted main
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Prepare signing
+        id: signing
+        env:
+          APK_KEYSTORE_BASE64: ${{ secrets.APK_KEYSTORE_BASE64 }}
+          APK_KEYSTORE_PASSWORD: ${{ secrets.APK_KEYSTORE_PASSWORD }}
+          APK_KEY_ALIAS: ${{ secrets.APK_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          signing_dir="$RUNNER_TEMP/apk-signing"
+          mkdir -p "$signing_dir"
+          chmod 700 "$signing_dir"
+
+          if [[ -z "$APK_KEYSTORE_BASE64" && -z "$APK_KEYSTORE_PASSWORD" && -z "$APK_KEY_ALIAS" ]]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "artifact_suffix=unsigned" >> "$GITHUB_OUTPUT"
+          elif [[ -n "$APK_KEYSTORE_BASE64" && -n "$APK_KEYSTORE_PASSWORD" && -n "$APK_KEY_ALIAS" ]]; then
+            printf '%s' "$APK_KEYSTORE_BASE64" | base64 --decode > "$signing_dir/sts2.keystore"
+            chmod 600 "$signing_dir/sts2.keystore"
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "artifact_suffix=signed" >> "$GITHUB_OUTPUT"
+          else
+            echo "All APK signing secrets must be configured together." >&2
+            exit 1
+          fi
+
+      - name: Build in the pinned container
+        env:
+          APK_KEYSTORE_PASSWORD: ${{ secrets.APK_KEYSTORE_PASSWORD }}
+          APK_KEY_ALIAS: ${{ secrets.APK_KEY_ALIAS }}
+          GHCR_TOKEN: ${{ github.token }}
+          TOOLCHAIN_IMAGE: ${{ needs.toolchain.outputs.image }}
+        run: |
+          set -euo pipefail
+          test -d "$STS2_DEPS_DIR"
+          mkdir -p "$STS2_BUILD_CACHE_DIR" "$RUNNER_TEMP/apk-output"
+
+          printf '%s' "$GHCR_TOKEN" | podman login ghcr.io --username "${{ github.actor }}" --password-stdin
+          podman pull "$TOOLCHAIN_IMAGE"
+
+          args=(
+            --rm
+            --volume "$GITHUB_WORKSPACE:/src:ro"
+            --volume "$STS2_DEPS_DIR:/deps:ro"
+            --volume "$STS2_BUILD_CACHE_DIR:/cache"
+            --volume "$RUNNER_TEMP/apk-output:/out"
+          )
+
+          if [[ "${{ steps.signing.outputs.enabled }}" == "true" ]]; then
+            args+=(
+              --volume "$RUNNER_TEMP/apk-signing:/signing:ro"
+              --env ANDROID_KEYSTORE_PATH=/signing/sts2.keystore
+              --env ANDROID_KEYSTORE_PASSWORD
+              --env ANDROID_KEY_ALIAS
+            )
+          fi
+
+          podman run "${args[@]}" "$TOOLCHAIN_IMAGE"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: StS2Launcher-${{ steps.signing.outputs.artifact_suffix }}-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/apk-output/*.apk
+            ${{ runner.temp }}/apk-output/*.sha256
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+      - name: Remove signing material
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/apk-signing/sts2.keystore"
+          podman logout ghcr.io || true
