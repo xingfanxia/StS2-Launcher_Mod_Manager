@@ -83,6 +83,7 @@ public class GodotApp extends GodotActivity {
 	private static StartupRecoveryJournal.State startupRecoveryState;
 	private static long startupAttemptId;
 	private static volatile boolean previousExitReportReady;
+	private boolean gameInstallReady;
 	private volatile boolean warmupMemoryMonitoring;
 	private volatile boolean warmupLowMemory;
 	private volatile int warmupTrimLevel;
@@ -115,6 +116,21 @@ public class GodotApp extends GodotActivity {
 	public void onCreate(Bundle savedInstanceState) {
 		instance = this;
 		gameDir = new File(getFilesDir(), "game").getAbsolutePath();
+		maybeInjectDebugGameInstallFault("before-install-recovery");
+		try {
+			GameInstallRecovery.recover(getFilesDir());
+		} catch (IOException ex) {
+			Log.e(TAG, "[GameInstall] interrupted update recovery failed", ex);
+		}
+		maybeInjectDebugGameInstallFault("after-install-recovery");
+		gameInstallReady = GameInstallRecovery.isActiveLaunchable(getFilesDir());
+		if (gameInstallReady) {
+			try {
+				GameInstallRecovery.beginValidation(getFilesDir());
+			} catch (IOException ex) {
+				Log.e(TAG, "[GameInstall] failed to journal validation attempt", ex);
+			}
+		}
 		configureAppPrivateEnvironment();
 		beginStartupAttempt();
 
@@ -154,14 +170,22 @@ public class GodotApp extends GodotActivity {
 		// compressed-texture cache). Without this, atlas frame indexes that
 		// changed in the new PCK keep resolving to the old cached layout, which
 		// surfaces as carded/relic/potion images appearing in the wrong slots.
+		maybeInjectDebugGameInstallFault("before-cache-staging");
 		boolean wipingAtlas = processAtlasWipeFlow();
+		maybeInjectDebugGameInstallFault("after-cache-staging");
 		if (wipingAtlas) {
 			// Hold the system splash up until our overlay is on screen — without
 			// this the user sees a long black gap during ETC2 re-import (~30s).
 			splashScreen.setKeepOnScreenCondition(() -> !overlayHandoffReady);
 		}
 
-		setupAssemblies();
+		if (gameInstallReady) {
+			maybeInjectDebugGameInstallFault("before-assembly-sync");
+			setupAssemblies();
+			maybeInjectDebugGameInstallFault("after-assembly-sync");
+		} else {
+			Log.w(TAG, "[GameInstall] no complete active PCK/DLL tuple; using launcher bootstrap");
+		}
 		extractAssetFile("FMOD_LOGOS/FMOD Logo White - Transparent Background.png", "fmod_logo.png");
 
 		super.onCreate(savedInstanceState);
@@ -248,8 +272,43 @@ public class GodotApp extends GodotActivity {
 			if ("1".equals(intent.getStringExtra("debug_diagnostic_dump"))) {
 				runDiagnosticDump();
 			}
+			String installFault = intent.getStringExtra("debug_game_install_fault");
+			if (installFault != null && isManagedGameInstallFault(installFault)) {
+				File marker = new File(getFilesDir(), GAME_INSTALL_FAULT_MARKER);
+				try (FileWriter writer = new FileWriter(marker, false)) {
+					writer.write(installFault);
+				}
+				Log.i(TAG, "[GameInstall/Fault] armed " + installFault);
+			}
 		} catch (IOException ex) {
 			Log.w(TAG, "[Debug] handleDebugIntents IO failure", ex);
+		}
+	}
+
+	private static final String GAME_INSTALL_FAULT_MARKER = ".debug_game_install_fault";
+
+	private void maybeInjectDebugGameInstallFault(String point) {
+		if (BuildConfig.VERSION_NAME == null || !BuildConfig.VERSION_NAME.contains("-debug")) return;
+		Intent intent = getIntent();
+		if (intent == null || !point.equals(intent.getStringExtra("debug_game_install_fault"))) return;
+		intent.removeExtra("debug_game_install_fault");
+		Log.e(TAG, "[GameInstall/Fault] terminating at " + point);
+		Runtime.getRuntime().halt(86);
+	}
+
+	private static boolean isManagedGameInstallFault(String point) {
+		switch (point) {
+			case "after-staging-created":
+			case "after-file-verified":
+			case "after-depot-manifest-committed":
+			case "after-all-depots-verified":
+			case "after-pck-patched":
+			case "after-prepared":
+			case "after-active-retired":
+			case "after-staged-activated":
+				return true;
+			default:
+				return false;
 		}
 	}
 
@@ -779,7 +838,7 @@ public class GodotApp extends GodotActivity {
 	public List<String> getCommandLine() {
 		List<String> commands = new ArrayList<>(super.getCommandLine());
 		File pckFile = new File(gameDir, PCK_FILE);
-		if (pckFile.exists()) {
+		if (gameInstallReady && pckFile.exists()) {
 			commands.add("--main-pack");
 			commands.add(pckFile.getAbsolutePath());
 			Log.i(TAG, "Loading PCK from: " + pckFile.getAbsolutePath());
@@ -1162,6 +1221,16 @@ public class GodotApp extends GodotActivity {
 			persistStartupRecoveryStateLocked();
 			Log.i(TAG, "[StartupRecovery] healthy stage=" + terminalStage);
 		}
+		if ("game-ready".equals(terminalStage)) startGameInstallCleanup();
+	}
+
+	private void startGameInstallCleanup() {
+		Thread cleanup = new Thread(() -> {
+			GameInstallRecovery.completeValidation(getFilesDir());
+			Log.i(TAG, "[GameInstall] validated update rollback cleanup complete");
+		}, "sts2-game-install-cleanup");
+		cleanup.setDaemon(true);
+		cleanup.start();
 	}
 
 	public boolean isPreviousExitReportReady() {

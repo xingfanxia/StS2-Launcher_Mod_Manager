@@ -316,7 +316,7 @@ public class LauncherModel : IDisposable
         }
     }
 
-    public async Task StartDownloadAsync(string branch = null)
+    public async Task StartDownloadAsync(string branch = null, bool forceFresh = false)
     {
         await EnsureConnectedAsync();
         if (_state != SessionState.LoggedIn || _connection == null)
@@ -335,7 +335,9 @@ public class LauncherModel : IDisposable
 
         try
         {
-            await Task.Run(() => _downloader.DownloadAsync(resolvedBranch, _downloadCts.Token));
+            await Task.Run(() =>
+                _downloader.DownloadAsync(resolvedBranch, _downloadCts.Token, forceFresh)
+            );
             WriteCacheStampAfterDownload(resolvedBranch, _downloader.LastDownloadedBuildId);
             DownloadCompleted?.Invoke();
         }
@@ -512,9 +514,18 @@ public class LauncherModel : IDisposable
 
     public static bool GameFilesReady()
     {
-        var pckPath = Path.Combine(OS.GetDataDir(), "game", "SlayTheSpire2.pck");
+        var dataDirectory = OS.GetDataDir();
+        var pckPath = Path.Combine(dataDirectory, "game", "SlayTheSpire2.pck");
         try
         {
+            if (
+                GameInstallTransaction.ActiveHasCompletionMarker(dataDirectory)
+                && !GameInstallTransaction.ActiveTupleMatchesFiles(dataDirectory)
+            )
+            {
+                PatchHelper.Log("[Launcher] Active game install marker does not match PCK/DLL");
+                return false;
+            }
             using var fs = File.OpenRead(pckPath);
             if (fs.Length < 4)
                 return false;
@@ -634,6 +645,9 @@ public class LauncherModel : IDisposable
     {
         try
         {
+            var activeBranch = GameInstallTransaction.ReadActiveTuple(OS.GetDataDir())?.Branch;
+            if (!string.IsNullOrWhiteSpace(activeBranch))
+                return activeBranch;
             if (File.Exists(SelectedBranchPath))
             {
                 var name = File.ReadAllText(SelectedBranchPath).Trim();
@@ -649,34 +663,11 @@ public class LauncherModel : IDisposable
     {
         try
         {
-            File.WriteAllText(SelectedBranchPath, string.IsNullOrEmpty(branch) ? "public" : branch);
+            var temporary = SelectedBranchPath + ".tmp";
+            File.WriteAllText(temporary, string.IsNullOrEmpty(branch) ? "public" : branch);
+            File.Move(temporary, SelectedBranchPath, overwrite: true);
         }
         catch { }
-    }
-
-    // Wipes the downloaded game files and the cached manifest state. Called when
-    // the user switches Steam branches: the existing delta-update path occasionally
-    // produces visually broken installs (e.g. card art mismatches) when going from
-    // public ↔ public-beta, so a branch switch always pulls every file fresh.
-    // Login, saves, and the ownership marker are kept untouched.
-    public void WipeGameFiles()
-    {
-        try
-        {
-            var gameDir = Path.Combine(_dataDir, "game");
-            var stateDir = Path.Combine(_dataDir, "download_state");
-            if (Directory.Exists(gameDir))
-                Directory.Delete(gameDir, recursive: true);
-            if (Directory.Exists(stateDir))
-                Directory.Delete(stateDir, recursive: true);
-            // 다음 다운로드에서 새 stamp 가 작성되도록 기존 stamp 도 함께 삭제.
-            CacheStamp.Delete();
-            PatchHelper.Log("[Launcher] Game files wiped");
-        }
-        catch (Exception ex)
-        {
-            PatchHelper.Log($"[Launcher] WipeGameFiles failed: {ex.Message}");
-        }
     }
 
     public static GodotObject GetGodotApp()

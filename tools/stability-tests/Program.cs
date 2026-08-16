@@ -360,6 +360,184 @@ try
     );
 
     Run(
+        "game update interruption exposes only an old or new complete tuple",
+        () =>
+        {
+            var transactionRoot = Path.Combine(root, "game-transaction");
+            Reset(transactionRoot);
+            WriteInstall(transactionRoot, "old");
+
+            var partial = GameInstallTransaction.Begin(transactionRoot, forceFresh: false);
+            ReplaceInstallFile(partial.StagingGameDirectory, "SlayTheSpire2.pck", "GDPCnew");
+            GameInstallTransaction.Recover(transactionRoot);
+            AssertInstallTuple(transactionRoot, "old", "partial download");
+
+            foreach (
+                var faultPoint in new[]
+                {
+                    GameInstallFaultPoint.AfterPrepared,
+                    GameInstallFaultPoint.AfterActiveRetired,
+                    GameInstallFaultPoint.AfterStagedActivated,
+                }
+            )
+            {
+                GameInstallTransaction.DiscardStaging(transactionRoot);
+                var transaction = GameInstallTransaction.Begin(transactionRoot, forceFresh: true);
+                WriteInstallFiles(transaction.StagingGameDirectory, "new");
+                transaction.Prepare(
+                    GameInstallTuple.Capture(
+                        transaction.StagingGameDirectory,
+                        "public-beta",
+                        "new-build",
+                        new Dictionary<uint, ulong> { [2868842] = 5045320271505434676 }
+                    )
+                );
+
+                if (faultPoint == GameInstallFaultPoint.AfterPrepared)
+                {
+                    var extraAssembly = Path.Combine(
+                        transaction.StagingGameDirectory,
+                        "data_sts2_windows_x86_64",
+                        "unexpected.dll"
+                    );
+                    File.WriteAllText(extraAssembly, "mixed");
+                    bool rejectedMixedAssemblySet = false;
+                    try
+                    {
+                        transaction.Commit();
+                    }
+                    catch (InvalidDataException)
+                    {
+                        rejectedMixedAssemblySet = true;
+                    }
+                    Assert(
+                        rejectedMixedAssemblySet,
+                        "activation must reject a changed game assembly set"
+                    );
+                    File.Delete(extraAssembly);
+                }
+
+                try
+                {
+                    transaction.Commit(point =>
+                    {
+                        if (point == faultPoint)
+                            throw new GameInstallInterruptionException(point.ToString());
+                    });
+                }
+                catch (GameInstallInterruptionException) { }
+
+                GameInstallTransaction.Recover(transactionRoot);
+                var (pck, assembly) = ReadInstallTuple(transactionRoot);
+                Assert(pck == assembly, $"{faultPoint} produced mixed {pck}/{assembly}");
+                Assert(pck is "old" or "new", $"{faultPoint} unknown tuple {pck}");
+                if (pck == "new")
+                {
+                    var active = GameInstallTransaction.ReadActiveTuple(transactionRoot);
+                    Assert(active?.Branch == "public-beta", $"{faultPoint} active branch");
+                    Assert(active?.BuildId == "new-build", $"{faultPoint} active build");
+                }
+
+                GameInstallTransaction.CompleteValidation(transactionRoot);
+                Assert(
+                    !Directory.Exists(GameInstallTransaction.GetRollbackPath(transactionRoot)),
+                    $"{faultPoint} rollback cleanup"
+                );
+                if (pck == "old")
+                    continue;
+
+                // Restore a deterministic old baseline for the next injected window.
+                Reset(transactionRoot);
+                WriteInstall(transactionRoot, "old");
+            }
+
+            var repository = FindRepositoryRoot();
+            var downloader = File.ReadAllText(
+                Path.Combine(repository, "src", "STS2Mobile", "Steam", "DepotDownloader.cs")
+            );
+            var model = File.ReadAllText(
+                Path.Combine(repository, "src", "STS2Mobile", "Launcher", "LauncherModel.cs")
+            );
+            var android = File.ReadAllText(
+                Path.Combine(
+                    repository,
+                    "android",
+                    "src",
+                    "com",
+                    "game",
+                    "sts2launcher",
+                    "modmanager",
+                    "GodotApp.java"
+                )
+            );
+            Assert(
+                downloader.Contains("GameInstallTransaction.Begin", StringComparison.Ordinal)
+                    && downloader.Contains("transaction.Prepare", StringComparison.Ordinal)
+                    && downloader.Contains("transaction.Commit", StringComparison.Ordinal),
+                "depot writes must activate only through the directory transaction"
+            );
+            Assert(
+                !model.Contains(
+                    "Directory.Delete(gameDir, recursive: true)",
+                    StringComparison.Ordinal
+                )
+                    && model.IndexOf("SaveSelectedBranch", StringComparison.Ordinal)
+                        > model.IndexOf("DownloadAsync", StringComparison.Ordinal),
+                "branch selection must publish only after a successful active commit"
+            );
+            Assert(
+                android.Contains("GameInstallRecovery.recover", StringComparison.Ordinal)
+                    && android.IndexOf("GameInstallRecovery.recover", StringComparison.Ordinal)
+                        < android.IndexOf("setupAssemblies();", StringComparison.Ordinal),
+                "Android must repair an interrupted directory swap before loading PCK/DLL"
+            );
+            foreach (
+                var faultPoint in new[]
+                {
+                    "after-staging-created",
+                    "after-file-verified",
+                    "after-depot-manifest-committed",
+                    "after-all-depots-verified",
+                    "after-pck-patched",
+                }
+            )
+            {
+                Assert(
+                    downloader.Contains($"Hit(\"{faultPoint}\")", StringComparison.Ordinal),
+                    $"missing deterministic update fault hook {faultPoint}"
+                );
+            }
+            Assert(
+                downloader.Contains(
+                    "transaction.Commit(_faultInjector.Hit)",
+                    StringComparison.Ordinal
+                ),
+                "directory activation must expose every rename fault point"
+            );
+            foreach (
+                var faultPoint in new[]
+                {
+                    "before-install-recovery",
+                    "after-install-recovery",
+                    "before-cache-staging",
+                    "after-cache-staging",
+                    "before-assembly-sync",
+                    "after-assembly-sync",
+                }
+            )
+            {
+                Assert(
+                    android.Contains(
+                        $"maybeInjectDebugGameInstallFault(\"{faultPoint}\")",
+                        StringComparison.Ordinal
+                    ),
+                    $"missing deterministic Android fault hook {faultPoint}"
+                );
+            }
+        }
+    );
+
+    Run(
         "Android mod configuration resolves to app-private XDG storage",
         () =>
         {
@@ -924,10 +1102,49 @@ static void Assert(bool condition, string message)
         throw new InvalidOperationException(message);
 }
 
+static void WriteInstall(string transactionRoot, string version)
+{
+    var game = GameInstallTransaction.GetActivePath(transactionRoot);
+    Directory.CreateDirectory(game);
+    WriteInstallFiles(game, version);
+}
+
+static void WriteInstallFiles(string gameDirectory, string version)
+{
+    Directory.CreateDirectory(gameDirectory);
+    Directory.CreateDirectory(Path.Combine(gameDirectory, "data_sts2_windows_x86_64"));
+    File.WriteAllText(Path.Combine(gameDirectory, "SlayTheSpire2.pck"), "GDPC" + version);
+    File.WriteAllText(Path.Combine(gameDirectory, "data_sts2_windows_x86_64", "sts2.dll"), version);
+}
+
+static void ReplaceInstallFile(string gameDirectory, string relativePath, string content)
+{
+    var path = Path.Combine(gameDirectory, relativePath);
+    var temporary = path + ".downloading";
+    File.WriteAllText(temporary, content);
+    File.Move(temporary, path, overwrite: true);
+}
+
+static (string Pck, string Assembly) ReadInstallTuple(string transactionRoot)
+{
+    var game = GameInstallTransaction.GetActivePath(transactionRoot);
+    return (
+        File.ReadAllText(Path.Combine(game, "SlayTheSpire2.pck"))[4..],
+        File.ReadAllText(Path.Combine(game, "data_sts2_windows_x86_64", "sts2.dll"))
+    );
+}
+
+static void AssertInstallTuple(string transactionRoot, string expected, string context)
+{
+    var (pck, assembly) = ReadInstallTuple(transactionRoot);
+    Assert(pck == expected && assembly == expected, $"{context}: {pck}/{assembly}");
+}
+
 static void Reset(string path)
 {
-    foreach (var file in Directory.EnumerateFiles(path))
-        File.Delete(file);
+    if (Directory.Exists(path))
+        Directory.Delete(path, recursive: true);
+    Directory.CreateDirectory(path);
 }
 
 static int CountOccurrences(string text, string value)

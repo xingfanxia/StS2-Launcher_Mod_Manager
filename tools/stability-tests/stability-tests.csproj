@@ -26,5 +26,13 @@
       Include="../../src/STS2Mobile/Launcher/StartupRecoveryRequest.cs"
       Link="StartupRecoveryRequest.cs"
     />
+    <Compile
+      Include="../../src/STS2Mobile/Launcher/GameInstallTransaction.cs"
+      Link="GameInstallTransaction.cs"
+    />
+    <Compile
+      Include="../../src/STS2Mobile/Launcher/GameInstallFaultInjector.cs"
+      Link="GameInstallFaultInjector.cs"
+    />
   </ItemGroup>
 </Project>

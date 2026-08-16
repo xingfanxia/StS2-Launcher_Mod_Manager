@@ -85,7 +85,8 @@ Commit boundary: one-shot Safe Mode + mod candidate journal/tests。
 
 ## Phase 4 — Transactional game update and interruption recovery
 
-Status: in progress
+Status: implementation and automated gate completed; cumulative signed-device branch-switch and
+fault-injection rows are deferred to Phase 7.
 
 1. 建模完整版本元组：branch、Steam manifest/build、PCK identity、game assembly set、
    atlas/cache stamp；确定唯一 active marker 的提交点。

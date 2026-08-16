@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -7,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using SteamKit2;
 using SteamKit2.CDN;
+using STS2Mobile.Launcher;
 
 namespace STS2Mobile.Steam;
 
@@ -31,10 +33,17 @@ public class DepotDownloader : IDisposable
     private const int MaxConcurrentDownloads = 8;
 
     private readonly SteamConnection _connection;
-    private readonly string _gameDir;
-    private readonly string _stateDir;
+    private readonly string _dataDir;
+    private readonly string _activeGameDir;
+    private readonly string _legacyStateDir;
+    private GameInstallFaultInjector _faultInjector;
+    private string _gameDir;
+    private string _stateDir;
     private readonly Client _cdnClient;
     private readonly DownloadProgress _progress = new();
+    private readonly ConcurrentDictionary<string, byte> _filesReplacedDuringDownload = new(
+        StringComparer.OrdinalIgnoreCase
+    );
 
     private IReadOnlyList<Server> _servers;
     private int _serverIndex;
@@ -55,8 +64,11 @@ public class DepotDownloader : IDisposable
     public DepotDownloader(SteamConnection connection, string dataDir)
     {
         _connection = connection;
-        _gameDir = Path.Combine(dataDir, "game");
-        _stateDir = Path.Combine(dataDir, "download_state");
+        _dataDir = dataDir;
+        _activeGameDir = GameInstallTransaction.GetActivePath(dataDir);
+        _legacyStateDir = Path.Combine(dataDir, "download_state");
+        _gameDir = _activeGameDir;
+        _stateDir = ResolveActiveStateDirectory();
         _cdnClient = new Client(connection.Client);
     }
 
@@ -69,6 +81,9 @@ public class DepotDownloader : IDisposable
         _connection.SuspendIdleTimeout();
         try
         {
+            GameInstallTransaction.Recover(_dataDir);
+            _gameDir = _activeGameDir;
+            _stateDir = ResolveActiveStateDirectory();
             Directory.CreateDirectory(_stateDir);
 
             var appInfo = await FetchAppInfoAsync();
@@ -93,13 +108,25 @@ public class DepotDownloader : IDisposable
         }
     }
 
-    public async Task DownloadAsync(string branch = "public", CancellationToken ct = default)
+    public async Task DownloadAsync(
+        string branch = "public",
+        CancellationToken ct = default,
+        bool forceFresh = false
+    )
     {
         _connection.SuspendIdleTimeout();
+        GameInstallTransaction transaction = null;
         try
         {
+            _faultInjector = GameInstallFaultInjector.Consume(_dataDir);
+            _filesReplacedDuringDownload.Clear();
+            transaction = GameInstallTransaction.Begin(_dataDir, forceFresh);
+            transaction.SeedLegacyStateDirectory(_legacyStateDir);
+            _gameDir = transaction.StagingGameDirectory;
+            _stateDir = transaction.StagingStateDirectory;
             Directory.CreateDirectory(_gameDir);
             Directory.CreateDirectory(_stateDir);
+            _faultInjector.Hit("after-staging-created");
 
             Log($"Fetching app info (branch={branch})...");
             var appInfo = await FetchAppInfoAsync();
@@ -136,15 +163,38 @@ public class DepotDownloader : IDisposable
                 await DownloadDepotAsync(depotId, manifestId, branch, ct);
             }
 
+            _faultInjector.Hit("after-all-depots-verified");
+
             Log("All game files downloaded!");
 
             // Remove Sentry plugin references (no android.arm64 build exists).
+            if (!_filesReplacedDuringDownload.ContainsKey("SlayTheSpire2.pck"))
+                transaction.DetachFileForWrite("SlayTheSpire2.pck");
             PatchGamePck(Path.Combine(_gameDir, "SlayTheSpire2.pck"));
+            _faultInjector.Hit("after-pck-patched");
+
+            var tuple = GameInstallTuple.Capture(
+                _gameDir,
+                branch,
+                LastDownloadedBuildId,
+                depots.ToDictionary(pair => pair.DepotId, pair => pair.ManifestId)
+            );
+            transaction.Prepare(tuple);
+            transaction.Commit(_faultInjector.Hit);
+            Log("Activated complete game update");
         }
         finally
         {
+            _gameDir = _activeGameDir;
+            _stateDir = ResolveActiveStateDirectory();
             _connection.ResumeIdleTimeout();
         }
+    }
+
+    private string ResolveActiveStateDirectory()
+    {
+        var activeState = Path.Combine(_activeGameDir, ".download_state");
+        return Directory.Exists(activeState) ? activeState : _legacyStateDir;
     }
 
     // Returns the list of public branches advertised in the app's depot KV tree.
@@ -514,6 +564,7 @@ public class DepotDownloader : IDisposable
         }
 
         SaveManifest(depotId, manifest, manifestId);
+        _faultInjector.Hit("after-depot-manifest-committed");
         Log($"Depot {depotId} complete");
     }
 
@@ -651,6 +702,8 @@ public class DepotDownloader : IDisposable
         }
 
         File.Move(tempPath, filePath, overwrite: true);
+        _filesReplacedDuringDownload[fileName] = 0;
+        _faultInjector.Hit("after-file-verified");
     }
 
     // Computes SHA-1 of a decompressed chunk and compares it to the manifest ChunkID.
@@ -783,11 +836,19 @@ public class DepotDownloader : IDisposable
 
     private void SaveManifest(uint depotId, DepotManifest manifest, ulong manifestId)
     {
-        using (var fs = File.Create(Path.Combine(_stateDir, $"{depotId}.manifest")))
+        Directory.CreateDirectory(_stateDir);
+        var manifestPath = Path.Combine(_stateDir, $"{depotId}.manifest");
+        var manifestTemp = manifestPath + ".tmp";
+        using (var fs = File.Create(manifestTemp))
         {
             manifest.Serialize(fs);
         }
-        File.WriteAllText(Path.Combine(_stateDir, $"{depotId}.id"), manifestId.ToString());
+        File.Move(manifestTemp, manifestPath, overwrite: true);
+
+        var idPath = Path.Combine(_stateDir, $"{depotId}.id");
+        var idTemp = idPath + ".tmp";
+        File.WriteAllText(idTemp, manifestId.ToString());
+        File.Move(idTemp, idPath, overwrite: true);
     }
 
     private void Log(string msg)

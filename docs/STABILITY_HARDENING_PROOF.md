@@ -195,3 +195,66 @@ candidate exclusion and half-set selection; hash the real `Mods/`,
 and verify a supported mod still loads. Managed failure, hang/ANR, immediate
 native-like exit, and delayed-exit rows remain device-proof requirements rather
 than completed claims.
+
+## Phase 4 — transactional game update and interruption recovery
+
+### Root cause and activation contract
+
+The old downloader committed each verified file directly into the active
+`game/` directory, then wrote each depot manifest independently. Branch changes
+first recursively deleted both `game/` and `download_state/`. A process death in
+either flow could therefore expose a new PCK with old assemblies, a manifest
+claiming files that were not all present, or no usable old install at all.
+
+Downloads now target sibling `game.staging/` exclusively. Unchanged files use
+same-filesystem hard links where supported (copy fallback); every write path
+replaces rather than mutates a shared inode, and the in-place PCK patch detaches
+only when the download did not already replace that file. Depot manifests and
+ids live inside the staged tree and use temp-file replacement. A force-fresh
+branch switch still redownloads every target file, but it never deletes the
+active version first.
+
+After Steam verification and PCK patching, the staged completion marker records
+the branch, build, depot manifest ids, PCK size/mtime/magic, complete top-level
+game assembly set, and the PCK mtime that owns atlas-cache invalidation. Only a
+matching marker may cross the directory commit point:
+
+1. `game/` is atomically renamed to `game.rollback/`;
+2. `game.staging/` is atomically renamed to `game/`;
+3. Android repairs either rename window before selecting the PCK or copying any
+   assembly.
+
+The rollback remains until the new process reaches `game-ready`. Android writes
+a one-shot validation-attempt marker before cache staging and assembly sync. If
+that first startup dies before the healthy terminal stage, the next process
+restores the last validated directory. A healthy startup publishes the new
+branch and performs rollback/staging cleanup on a daemon thread. Invalid active
+markers fall back to the launcher bootstrap instead of loading a suspect PCK.
+Legacy complete installs remain accepted for the one-time migration path.
+
+### Fault and focused evidence
+
+- The pure C# transaction regression covers partial staging plus interruption
+  after prepare, after active retirement, and after staged activation. Every
+  recovery exposes matching old/old or new/new PCK/DLL contents, rejects a
+  changed assembly set, and retains rollback until explicit validation.
+- The pure JVM recovery regression covers the Android rename window, invalid
+  activated marker, first-start failure rollback, legacy migration, bootstrap
+  fallback, validated branch publication, and post-healthy cleanup.
+- Debug-version-only intent hooks cover staging creation, first verified file,
+  depot-manifest commit, all-depot verification, PCK patch, marker preparation,
+  both directory renames, Android pre/post recovery, cache staging, and assembly
+  sync. Values are allowlisted, bounded, app-private, and one-shot.
+- The destructive pre-download `WipeGameFiles` flow and early selected-branch
+  publication were removed. Download failure/cancellation resets pending branch
+  state while the old active directory remains untouched.
+- Pinned amd64 Docker APK pipeline passed the C#/Java/device-capture focused
+  suites, 53 game-scoped MemberRefs, 3 implemented interfaces, all 60 required
+  patch/reflection rules, C# publish, Java/JNI compilation, 47 Gradle tasks, and
+  Workshop sync. The unsigned artifact SHA-256 is
+  `18daf31e4a04015d8871a083c2150434ae9ffa54ccc7b358c475020ca87ce248`.
+
+Remaining final device gate: use the cumulative signed debug-controllable APK
+for public↔public-beta and at least three representative process-death points;
+prove the recovered marker, PCK, full assembly set and selected branch are one
+complete old or new tuple, then verify mods, saves and login remain unchanged.
