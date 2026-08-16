@@ -1,4 +1,5 @@
 using HarmonyLib;
+using STS2Mobile.Launcher.Components;
 
 namespace STS2Mobile.Patches;
 
@@ -69,5 +70,6 @@ public static class GameInputSuppressPatches
     }
 
     // Harmony prefix: returning false skips the original method.
-    public static bool SkipWhileLauncherActive() => !STS2Mobile.Launcher.LauncherUI.LauncherActive;
+    public static bool SkipWhileLauncherActive() =>
+        !STS2Mobile.Launcher.LauncherUI.LauncherActive && !StartupInputGate.Active;
 }

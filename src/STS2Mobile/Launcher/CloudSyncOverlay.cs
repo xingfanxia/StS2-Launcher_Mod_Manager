@@ -18,10 +18,18 @@ public class CloudSyncOverlay : Control
     private Label _statusLabel;
     private Label _detailLabel;
     private StyledProgressBar _progressBar;
+    private bool _inputGateHeld;
 
     public void Initialize()
     {
         ZIndex = 150;
+
+        // LauncherUI is queued for deletion before cloud work starts. Keep raw
+        // Android Back/hotkeys from reaching the not-yet-started game, and keep
+        // SceneTree from auto-quitting while this transition owns the screen.
+        _inputGateHeld = true;
+        StartupInputGate.Enter(this);
+        TreeExiting += ReleaseInputGate;
 
         try
         {
@@ -68,11 +76,13 @@ public class CloudSyncOverlay : Control
         Callable
             .From(() =>
             {
-                if (_statusLabel != null)
+                if (!GodotObject.IsInstanceValid(this) || !IsInsideTree())
+                    return;
+                if (IsAlive(_statusLabel))
                     _statusLabel.Text = status;
-                if (_detailLabel != null)
+                if (IsAlive(_detailLabel))
                     _detailLabel.Text = detail;
-                if (_progressBar != null)
+                if (IsAlive(_progressBar))
                     _progressBar.Visible = false;
             })
             .CallDeferred();
@@ -87,16 +97,39 @@ public class CloudSyncOverlay : Control
         Callable
             .From(() =>
             {
-                if (_statusLabel != null)
+                if (!GodotObject.IsInstanceValid(this) || !IsInsideTree())
+                    return;
+                if (IsAlive(_statusLabel))
                     _statusLabel.Text = "클라우드 백업 중";
-                if (_progressBar != null)
+                if (IsAlive(_progressBar))
                 {
                     _progressBar.Visible = true;
                     _progressBar.Value = total > 0 ? (double)done / total * 100 : 0;
                 }
-                if (_detailLabel != null)
+                if (IsAlive(_detailLabel))
                     _detailLabel.Text = total > 0 ? $"{done} / {total}" : $"{done}";
             })
             .CallDeferred();
     }
+
+    public override void _Notification(int what)
+    {
+        if (what == NotificationWMGoBackRequest && _inputGateHeld)
+            StartupInputGate.HandleBack();
+    }
+
+    private void ReleaseInputGate()
+    {
+        if (!_inputGateHeld)
+            return;
+
+        _inputGateHeld = false;
+        StartupInputGate.Exit(this);
+        _statusLabel = null;
+        _detailLabel = null;
+        _progressBar = null;
+    }
+
+    private static bool IsAlive(GodotObject value) =>
+        value != null && GodotObject.IsInstanceValid(value);
 }

@@ -311,6 +311,144 @@ try
     );
 
     Run(
+        "startup transitions keep Back and deferred UI lifecycle-safe",
+        () =>
+        {
+            var repository = FindRepositoryRoot();
+            var launcherRoot = Path.Combine(repository, "src", "STS2Mobile", "Launcher");
+            var cloudOverlay = File.ReadAllText(Path.Combine(launcherRoot, "CloudSyncOverlay.cs"));
+            var warmup = File.ReadAllText(Path.Combine(launcherRoot, "ShaderWarmupScreen.cs"));
+            var launcherUi = File.ReadAllText(Path.Combine(launcherRoot, "LauncherUI.cs"));
+            var inputPatches = File.ReadAllText(
+                Path.Combine(
+                    repository,
+                    "src",
+                    "STS2Mobile",
+                    "Patches",
+                    "GameInputSuppressPatches.cs"
+                )
+            );
+            var launcherPatches = File.ReadAllText(
+                Path.Combine(repository, "src", "STS2Mobile", "Patches", "LauncherPatches.cs")
+            );
+
+            foreach (var source in new[] { cloudOverlay, warmup })
+            {
+                Assert(
+                    source.Contains("StartupInputGate.Enter(this);", StringComparison.Ordinal)
+                        && source.Contains(
+                            "StartupInputGate.Exit(this);",
+                            StringComparison.Ordinal
+                        ),
+                    "every full-screen startup transition must hold the shared input gate"
+                );
+                Assert(
+                    source.Contains("NotificationWMGoBackRequest", StringComparison.Ordinal)
+                        && source.Contains(
+                            "StartupInputGate.HandleBack();",
+                            StringComparison.Ordinal
+                        ),
+                    "startup transitions must route Android Back through the shared gate"
+                );
+            }
+
+            Assert(
+                inputPatches.Contains("!StartupInputGate.Active", StringComparison.Ordinal),
+                "raw game input must stay suppressed after LauncherUI is freed"
+            );
+            Assert(
+                launcherPatches.Contains(
+                    "using var startupInputLease = StartupInputGate.Hold(gameNode);",
+                    StringComparison.Ordinal
+                ),
+                "the input gate must span every PLAY-to-GameStartup transition"
+            );
+            Assert(
+                launcherUi.Contains(
+                    "tree.AutoAcceptQuit = !StartupInputGate.Active;",
+                    StringComparison.Ordinal
+                ),
+                "launcher teardown must not reopen auto-quit under a startup transition"
+            );
+            Assert(
+                cloudOverlay.Contains(
+                    "GodotObject.IsInstanceValid(this) || !IsInsideTree()",
+                    StringComparison.Ordinal
+                )
+                    && cloudOverlay.Contains("IsAlive(_statusLabel)", StringComparison.Ordinal)
+                    && cloudOverlay.Contains("IsAlive(_progressBar)", StringComparison.Ordinal),
+                "deferred cloud UI callbacks must reject freed nodes and controls"
+            );
+        }
+    );
+
+    Run(
+        "cloud drain waits never poll on the Godot main thread",
+        () =>
+        {
+            var repository = FindRepositoryRoot();
+            var patchesRoot = Path.Combine(repository, "src", "STS2Mobile", "Patches");
+            var lifecycle = File.ReadAllText(Path.Combine(patchesRoot, "AppLifecyclePatches.cs"));
+            var launcher = File.ReadAllText(Path.Combine(patchesRoot, "LauncherPatches.cs"));
+
+            Assert(
+                lifecycle.Contains("_ = Task.Run(() =>", StringComparison.Ordinal)
+                    && lifecycle.Contains(
+                        "Callable.From(RestartAfterQuitFlush).CallDeferred();",
+                        StringComparison.Ordinal
+                    ),
+                "background/quit cloud drains must run off-main and defer restart"
+            );
+            Assert(
+                lifecycle.Contains(
+                    "Interlocked.Exchange(ref _quitRestartInProgress, 1)",
+                    StringComparison.Ordinal
+                ),
+                "repeated Quit calls must not start concurrent drain/restart operations"
+            );
+            Assert(
+                lifecycle.Contains(
+                    "Failed to queue deferred quit restart",
+                    StringComparison.Ordinal
+                )
+                    && CountOccurrences(
+                        lifecycle,
+                        "Interlocked.Exchange(ref _quitRestartInProgress, 0)"
+                    ) >= 3,
+                "every deferred-restart failure path must release the one-shot latch"
+            );
+            Assert(
+                lifecycle.Contains(
+                    "Interlocked.Exchange(ref _backgroundFlushInProgress, 1)",
+                    StringComparison.Ordinal
+                )
+                    && lifecycle.Contains(
+                        "Interlocked.Exchange(ref _backgroundFlushInProgress, 0)",
+                        StringComparison.Ordinal
+                    )
+                    && CountOccurrences(
+                        lifecycle,
+                        "Interlocked.Exchange(ref _backgroundFlushInProgress, 0)"
+                    ) >= 2,
+                "repeated background callbacks must coalesce concurrent cloud drains"
+            );
+            Assert(
+                !lifecycle.Contains(
+                    "SteamKit2CloudSaveStore.Instance?.Flush(300_000)",
+                    StringComparison.Ordinal
+                ),
+                "Quit must not synchronously poll cloud writes for five minutes"
+            );
+
+            const string asyncFlush = "await Task.Run(() => cloudStore.Flush(timeoutMs: 300_000))";
+            Assert(
+                CountOccurrences(launcher, asyncFlush) == 2,
+                "both conflict verification flushes must be awaited off-main"
+            );
+        }
+    );
+
+    Run(
         "APK build enforces both compatibility audits",
         () =>
         {
@@ -406,6 +544,18 @@ static void Reset(string path)
 {
     foreach (var file in Directory.EnumerateFiles(path))
         File.Delete(file);
+}
+
+static int CountOccurrences(string text, string value)
+{
+    int count = 0;
+    int offset = 0;
+    while ((offset = text.IndexOf(value, offset, StringComparison.Ordinal)) >= 0)
+    {
+        count++;
+        offset += value.Length;
+    }
+    return count;
 }
 
 static string FindRepositoryRoot()

@@ -21,6 +21,7 @@ public class ShaderWarmupScreen : Control
     private Label _statusLabel;
     private Label _detailLabel;
     private ProgressBar _progressBar;
+    private bool _inputGateHeld;
 
     public static bool NeedsWarmup()
     {
@@ -50,7 +51,9 @@ public class ShaderWarmupScreen : Control
         ZIndex = 100;
         // If the scene tree removes this screen during a lifecycle/configuration
         // teardown, release the caller instead of leaving its launch Task pending.
-        TreeExiting += () => _operation.Complete(restartRequired: false);
+        TreeExiting += OnTreeExiting;
+        _inputGateHeld = true;
+        StartupInputGate.Enter(this);
 
         try
         {
@@ -69,6 +72,22 @@ public class ShaderWarmupScreen : Control
         }
 
         Callable.From(RunWarmup).CallDeferred();
+    }
+
+    public override void _Notification(int what)
+    {
+        if (what == NotificationWMGoBackRequest && _inputGateHeld)
+            StartupInputGate.HandleBack();
+    }
+
+    private void OnTreeExiting()
+    {
+        _operation.Complete(restartRequired: false);
+        if (!_inputGateHeld)
+            return;
+
+        _inputGateHeld = false;
+        StartupInputGate.Exit(this);
     }
 
     private void BuildUI()

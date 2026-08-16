@@ -1254,7 +1254,7 @@ public class LauncherController
     }
 
     // P1-2 (G7) — restartApp bypasses NGame.Quit entirely (that's where
-    // QuitPrefix's own Flush(300s) lives), so any cloud writes still queued
+    // QuitPrefix's own off-main Flush(60s) lives), so any cloud writes still queued
     // at these points (AtlasWipe confirm, update-restart) would be silently
     // dropped — the cloud stays stale until the NEXT session's handshake
     // self-heals it, and in the meantime another device could pull the stale

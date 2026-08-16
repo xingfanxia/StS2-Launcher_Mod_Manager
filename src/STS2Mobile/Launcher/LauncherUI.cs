@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Threading.Tasks;
 using Godot;
+using STS2Mobile.Launcher.Components;
 using STS2Mobile.Patches;
 
 namespace STS2Mobile.Launcher;
@@ -229,7 +230,10 @@ public class LauncherUI : Control
             if (tree != null)
             {
                 tree.ProcessFrame -= OnProcessFrame;
-                tree.AutoAcceptQuit = true;
+                // PLAY may already have installed a cloud/warmup transition guard.
+                // Do not reopen SceneTree auto-quit in the one-frame gap between
+                // this node leaving and that full-screen transition taking over.
+                tree.AutoAcceptQuit = !StartupInputGate.Active;
             }
         }
         catch (Exception ex)

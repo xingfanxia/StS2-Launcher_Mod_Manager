@@ -209,6 +209,12 @@ public static class LauncherPatches
             _cloudCacheReady = false;
             PatchHelper.Log("Launcher fallback forced local-only mode for this session");
         }
+
+        // The launcher is about to leave but the game is not ready to own input
+        // yet. Hold this across cloud/no-cloud, warmup/no-warmup, and GameStartup
+        // so local-only boots have the same Back/auto-quit protection.
+        using var startupInputLease = StartupInputGate.Hold(gameNode);
+
         // Issue #23 — dismiss the native ETC2-rebuild overlay if it was shown
         // during this boot. No-op when overlay was never installed.
         LauncherModel.GetGodotApp()?.Call("hideLoadingOverlay");
@@ -841,7 +847,12 @@ public static class LauncherPatches
             // finish in 1-15 s. The user is sitting on the dialog waiting for
             // verify and explicitly chose to commit a sync direction, so the
             // wait is expected.
-            cloudStore.Flush(timeoutMs: 300_000);
+            bool drained = await Task.Run(() => cloudStore.Flush(timeoutMs: 300_000));
+            if (!drained)
+            {
+                PatchHelper.Log("[Cloud] Flush timed out before verification");
+                return false;
+            }
         }
         catch (Exception ex)
         {
@@ -874,7 +885,12 @@ public static class LauncherPatches
     {
         try
         {
-            cloudStore.Flush(timeoutMs: 300_000);
+            bool drained = await Task.Run(() => cloudStore.Flush(timeoutMs: 300_000));
+            if (!drained)
+            {
+                PatchHelper.Log("[Cloud] Slot flush timed out before verification");
+                return false;
+            }
         }
         catch (Exception ex)
         {
