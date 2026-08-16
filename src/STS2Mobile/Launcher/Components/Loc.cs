@@ -18,15 +18,34 @@ public static class Loc
         return IsKo ? ko : en;
     }
 
-    public static void Watch(Label label) => LocalizedTextRegistry.Watch(label);
+    public static string Authored(string text)
+    {
+        var korean = EnglishLocalization.RestoreKorean(text);
+        var english = EnglishLocalization.Translate(korean);
+        if (english != korean)
+            EnglishLocalization.Register(korean, english);
+        return IsEnglish ? english : korean;
+    }
 
-    public static void Watch(Button button) => LocalizedTextRegistry.Watch(button);
+    public static void Watch(
+        Label label,
+        TextProvenance provenance = TextProvenance.LauncherAuthored
+    ) => LocalizedTextRegistry.Watch(label, provenance);
 
-    public static void Watch(LineEdit lineEdit) => LocalizedTextRegistry.Watch(lineEdit);
+    public static void Watch(
+        Button button,
+        TextProvenance provenance = TextProvenance.LauncherAuthored
+    ) => LocalizedTextRegistry.Watch(button, provenance);
+
+    public static void Watch(
+        LineEdit lineEdit,
+        TextProvenance provenance = TextProvenance.LauncherAuthored
+    ) => LocalizedTextRegistry.Watch(lineEdit, provenance);
 
     // Called four times per second by LanguageToggle. This keeps text assigned by
     // upstream flows localized too, without editing every controller/dialog.
-    public static void RefreshWatched() => LocalizedTextRegistry.Refresh(IsEnglish);
+    public static LocalizationAuditSnapshot RefreshWatched() =>
+        LocalizedTextRegistry.Refresh(IsEnglish);
 
     public static void SetEnglish(bool enabled)
     {

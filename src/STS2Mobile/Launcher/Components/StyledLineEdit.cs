@@ -4,7 +4,12 @@ namespace STS2Mobile.Launcher.Components;
 
 public class StyledLineEdit : LineEdit
 {
-    public StyledLineEdit(string placeholder, float scale, bool secret = false)
+    public StyledLineEdit(
+        string placeholder,
+        float scale,
+        bool secret = false,
+        TextProvenance provenance = TextProvenance.LauncherAuthored
+    )
     {
         PlaceholderText = placeholder;
         Secret = secret;
@@ -33,6 +38,6 @@ public class StyledLineEdit : LineEdit
         AddThemeColorOverride("font_color", Ui.TextPrimary);
         AddThemeColorOverride("font_placeholder_color", Ui.TextDisabled);
         AddThemeColorOverride("caret_color", Ui.Accent);
-        Loc.Watch(this);
+        Loc.Watch(this, provenance);
     }
 }

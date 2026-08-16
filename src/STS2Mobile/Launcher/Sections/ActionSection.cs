@@ -143,7 +143,7 @@ public class ActionSection : VBoxContainer
 
     public void ShowLaunch(string text, bool showCloudSync, bool showUpdate)
     {
-        _launchButton.Text = text;
+        _launchButton.Text = Loc.Authored(text);
         _launchButton.Visible = true;
         _localBackupButton.Visible = showCloudSync;
         _cloudSyncToggle.Visible = showCloudSync;
@@ -225,11 +225,12 @@ public class ActionSection : VBoxContainer
         }
     }
 
-    public void SetGameUpdateButtonText(string text) => _gameUpdateButton.Text = text;
+    public void SetGameUpdateButtonText(string text) => _gameUpdateButton.Text = Loc.Authored(text);
 
     public void SetGameUpdateButtonDisabled(bool disabled) => _gameUpdateButton.Disabled = disabled;
 
-    public void SetLauncherUpdateButtonText(string text) => _launcherUpdateButton.Text = text;
+    public void SetLauncherUpdateButtonText(string text) =>
+        _launcherUpdateButton.Text = Loc.Authored(text);
 
     public void SetLauncherUpdateButtonDisabled(bool disabled) =>
         _launcherUpdateButton.Disabled = disabled;

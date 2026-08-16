@@ -67,7 +67,8 @@ public class ModDetailDialog : ColorRect
             title,
             scale,
             fontSize: 18,
-            align: HorizontalAlignment.Left
+            align: HorizontalAlignment.Left,
+            provenance: TextProvenance.ExternalContent
         );
         titleLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
         titleLabel.SizeFlagsHorizontal = SizeFlags.ExpandFill;
@@ -79,7 +80,8 @@ public class ModDetailDialog : ColorRect
                 subtitle,
                 scale,
                 fontSize: 12,
-                align: HorizontalAlignment.Left
+                align: HorizontalAlignment.Left,
+                provenance: TextProvenance.ExternalContent
             );
             sub.AutowrapMode = TextServer.AutowrapMode.WordSmart;
             sub.AddThemeColorOverride("font_color", new Color(0.65f, 0.65f, 0.72f));
@@ -92,7 +94,8 @@ public class ModDetailDialog : ColorRect
                 warning,
                 scale,
                 fontSize: 12,
-                align: HorizontalAlignment.Left
+                align: HorizontalAlignment.Left,
+                provenance: TextProvenance.LauncherTemplateWithExternalContent
             );
             warn.AutowrapMode = TextServer.AutowrapMode.WordSmart;
             warn.AddThemeColorOverride("font_color", new Color(0.95f, 0.75f, 0.3f));
@@ -116,7 +119,8 @@ public class ModDetailDialog : ColorRect
                 body,
                 scale,
                 fontSize: 13,
-                align: HorizontalAlignment.Left
+                align: HorizontalAlignment.Left,
+                provenance: TextProvenance.ExternalContent
             );
             bodyLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
             bodyLabel.SizeFlagsHorizontal = SizeFlags.ExpandFill;
@@ -134,7 +138,8 @@ public class ModDetailDialog : ColorRect
                     $"{label}: {value}",
                     scale,
                     fontSize: 11,
-                    align: HorizontalAlignment.Left
+                    align: HorizontalAlignment.Left,
+                    provenance: TextProvenance.LauncherTemplateWithExternalContent
                 );
                 fact.AutowrapMode = TextServer.AutowrapMode.Arbitrary;
                 fact.SizeFlagsHorizontal = SizeFlags.ExpandFill;

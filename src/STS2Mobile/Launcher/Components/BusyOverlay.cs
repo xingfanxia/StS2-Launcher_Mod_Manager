@@ -41,14 +41,19 @@ public class BusyOverlay : ColorRect
         box.AddThemeStyleboxOverride("panel", style);
         center.AddChild(box);
 
-        _label = new StyledLabel(message, scale, fontSize: Ui.FontSection);
+        _label = new StyledLabel(
+            Loc.Authored(message),
+            scale,
+            fontSize: Ui.FontSection,
+            provenance: TextProvenance.LauncherTemplateWithExternalContent
+        );
         _label.HorizontalAlignment = HorizontalAlignment.Center;
         _label.AutowrapMode = TextServer.AutowrapMode.WordSmart;
         _label.CustomMinimumSize = new Vector2((int)(240 * scale), 0);
         box.AddChild(_label);
     }
 
-    public void SetMessage(string message) => _label.Text = message;
+    public void SetMessage(string message) => _label.Text = Loc.Authored(message);
 
     public void Dismiss()
     {

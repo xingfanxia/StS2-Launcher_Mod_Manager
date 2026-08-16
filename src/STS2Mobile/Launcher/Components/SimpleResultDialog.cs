@@ -62,7 +62,13 @@ public class SimpleResultDialog : ColorRect
         vbox.AddChild(scroll);
         TouchScroll.Attach(scroll);
 
-        var label = new StyledLabel(message, scale, fontSize: 14, align: HorizontalAlignment.Left);
+        var label = new StyledLabel(
+            Loc.Authored(message),
+            scale,
+            fontSize: 14,
+            align: HorizontalAlignment.Left,
+            provenance: TextProvenance.LauncherTemplateWithExternalContent
+        );
         label.AutowrapMode = TextServer.AutowrapMode.WordSmart;
         label.CustomMinimumSize = new Vector2((int)(340 * scale), 0);
         label.SizeFlagsHorizontal = SizeFlags.ExpandFill;

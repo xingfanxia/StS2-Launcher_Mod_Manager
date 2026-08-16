@@ -89,6 +89,7 @@ fi
 
 echo "Running focused stability and compatibility regressions..."
 dotnet run --project tools/stability-tests/stability-tests.csproj
+bash tools/localization-audit/tests/run.sh
 bash tools/stability-tests-java/run.sh
 bash tools/device-stability/tests/run.sh
 bash tools/memberref-audit/tests/run.sh

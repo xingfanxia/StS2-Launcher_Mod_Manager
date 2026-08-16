@@ -489,7 +489,9 @@ public class GodotApp extends GodotActivity {
 		root.addView(spinner, spinnerLp);
 
 		TextView title = new TextView(this);
-		title.setText("이미지 인덱스 캐시를 다시 만드는 중입니다");
+		title.setText(nativeText(
+				"이미지 인덱스 캐시를 다시 만드는 중입니다",
+				"Rebuilding the image index cache"));
 		title.setTextColor(0xFFFFFFFF);
 		title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
 		title.setGravity(Gravity.CENTER);
@@ -500,11 +502,14 @@ public class GodotApp extends GodotActivity {
 		root.addView(title, titleLp);
 
 		TextView desc = new TextView(this);
-		desc.setText(
+		desc.setText(nativeText(
 				"게임 업데이트가 감지되어 모바일용 텍스처 캐시를\n"
 				+ "새 빌드 기준으로 재생성합니다.\n"
 				+ "첫 실행은 30~60초 소요되며 다음부터는 정상 속도입니다.\n\n"
-				+ "세이브 / 진행도 / 로그인 정보는 보존됩니다.");
+				+ "세이브 / 진행도 / 로그인 정보는 보존됩니다.",
+				"A game update was detected, so the mobile texture cache is being rebuilt "
+				+ "for the new build.\nThe first launch takes about 30–60 seconds; later "
+				+ "launches return to normal speed.\n\nSaves, progress, and login data are preserved."));
 		desc.setTextColor(0xFFCCCCCC);
 		desc.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
 		desc.setGravity(Gravity.CENTER);
@@ -1174,19 +1179,18 @@ public class GodotApp extends GodotActivity {
 				nativeRendererPromptActive = false;
 				return;
 			}
-			boolean english = isEnglishLauncherLanguage();
-			String title = english ? "Graphics startup recovery" : "그래픽 시작 복구";
-			String message = english
-					? "The launcher exited twice before its first usable frame. This can be caused by a graphics driver, but the cause is not confirmed. Restart once with the OpenGL compatibility renderer? Vulkan remains the default for later launches."
-					: "런처가 첫 사용 가능 화면 전에 두 번 종료되었습니다. 그래픽 드라이버가 원인일 수 있지만 확정된 것은 아닙니다. OpenGL 호환 렌더러로 한 번만 다시 시작할까요? 이후 실행의 기본값은 Vulkan으로 유지됩니다.";
+			String title = nativeText("그래픽 시작 복구", "Graphics startup recovery");
+			String message = nativeText(
+					"런처가 첫 사용 가능 화면 전에 두 번 종료되었습니다. 그래픽 드라이버가 원인일 수 있지만 확정된 것은 아닙니다. OpenGL 호환 렌더러로 한 번만 다시 시작할까요? 이후 실행의 기본값은 Vulkan으로 유지됩니다.",
+					"The launcher exited twice before its first usable frame. This can be caused by a graphics driver, but the cause is not confirmed. Restart once with the OpenGL compatibility renderer? Vulkan remains the default for later launches.");
 			new AlertDialog.Builder(this)
 					.setTitle(title)
 					.setMessage(message)
 					.setPositiveButton(
-							english ? "Try compatibility mode" : "호환 모드 시도",
+							nativeText("호환 모드 시도", "Try compatibility mode"),
 							(dialog, which) -> requestCompatibilityRendererRestart())
 					.setNegativeButton(
-							english ? "Keep Vulkan" : "Vulkan 유지",
+							nativeText("Vulkan 유지", "Keep Vulkan"),
 							(dialog, which) -> nativeRendererPromptActive = false)
 					.setCancelable(false)
 					.show();
@@ -1224,6 +1228,10 @@ public class GodotApp extends GodotActivity {
 			}
 		}
 		return !"ko".equalsIgnoreCase(Locale.getDefault().getLanguage());
+	}
+
+	private String nativeText(String korean, String english) {
+		return isEnglishLauncherLanguage() ? english : korean;
 	}
 
 	private void beginStartupAttempt() {

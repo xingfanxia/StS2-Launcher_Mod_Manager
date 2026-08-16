@@ -144,7 +144,11 @@ public class LauncherView
         left.AddChild(title);
         left.AddChild(new HSeparator());
 
-        _statusLabel = new StyledLabel("Initializing...", scale);
+        _statusLabel = new StyledLabel(
+            "Initializing...",
+            scale,
+            provenance: TextProvenance.LauncherTemplateWithExternalContent
+        );
         _statusLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
         left.AddChild(_statusLabel);
 
@@ -251,7 +255,7 @@ public class LauncherView
         ModsButton.Disabled = busy;
     }
 
-    public void SetStatus(string text) => _statusLabel.Text = text;
+    public void SetStatus(string text) => _statusLabel.Text = Loc.Authored(text);
 
     public void AppendLog(string msg) => Log.AppendLog(msg);
 

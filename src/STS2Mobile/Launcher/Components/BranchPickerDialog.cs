@@ -217,7 +217,12 @@ public class BranchPickerDialog : ColorRect
         var titleText = branch.IsPasswordProtected
             ? $"{branch.Name} (private)"
             : branch.Name + (branch.Name == currentBranch ? "  ·  current" : "");
-        var titleLabel = new StyledLabel(titleText, scale, fontSize: 14);
+        var titleLabel = new StyledLabel(
+            titleText,
+            scale,
+            fontSize: 14,
+            provenance: TextProvenance.ExternalContent
+        );
         titleLabel.AddThemeColorOverride(
             "font_color",
             branch.IsPasswordProtected ? new Color(0.55f, 0.55f, 0.6f) : new Color(0.95f, 0.95f, 1f)
@@ -226,7 +231,12 @@ public class BranchPickerDialog : ColorRect
 
         if (!string.IsNullOrEmpty(branch.Description))
         {
-            var descLabel = new StyledLabel(branch.Description, scale, fontSize: 11);
+            var descLabel = new StyledLabel(
+                branch.Description,
+                scale,
+                fontSize: 11,
+                provenance: TextProvenance.ExternalContent
+            );
             descLabel.AddThemeColorOverride("font_color", new Color(0.65f, 0.65f, 0.7f));
             descLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
             textCol.AddChild(descLabel);

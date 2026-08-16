@@ -127,7 +127,8 @@ Commit boundary: renderer decision/override only if capability gate passes。
 
 ## Phase 6 — Complete KR/EN localization coverage
 
-Status: pending
+Status: implementation, automated gate, and reference-device core surface audit completed; fault-only
+recovery dialogs and the final rotation/soak matrix remain in Phase 7.
 
 1. 建立 launcher-authored 可见文字 inventory，覆盖 C#/Godot 和 Android Java/resource
    的 screen、dialog、native overlay、toast/alert、status、tooltip、placeholder、按钮、

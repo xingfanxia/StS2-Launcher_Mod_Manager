@@ -9,6 +9,9 @@ public sealed class LanguageToggle : StyledButton
 {
     private readonly float _scale;
     private readonly Action<string> _showStatus;
+    private LocalizationAuditSnapshot? _auditCandidate;
+    private LocalizationAuditSnapshot? _lastReportedAudit;
+    private int _auditStableTicks;
 
     public LanguageToggle(float scale, Action<string> showStatus)
         : base("", scale, fontSize: 11, height: 28)
@@ -25,21 +28,46 @@ public sealed class LanguageToggle : StyledButton
         refreshTimer.Timeout += () =>
         {
             if (Loc.IsEnglish)
-                Loc.RefreshWatched();
+                RefreshAndAudit();
         };
         AddChild(refreshTimer);
+    }
+
+    private void RefreshAndAudit()
+    {
+        var audit = Loc.RefreshWatched();
+        if (_auditCandidate != audit)
+        {
+            _auditCandidate = audit;
+            _auditStableTicks = 1;
+            if (audit.UntranslatedLauncherText > 0)
+                ReportAudit(audit, warning: true);
+            return;
+        }
+
+        _auditStableTicks++;
+        if (_auditStableTicks == 4 && _lastReportedAudit != audit)
+            ReportAudit(audit, warning: audit.UntranslatedLauncherText > 0);
+    }
+
+    private void ReportAudit(LocalizationAuditSnapshot audit, bool warning)
+    {
+        _lastReportedAudit = audit;
+        var message =
+            $"[LocalizationAudit] visible={audit.VisibleText} "
+            + $"authored_hangul={audit.UntranslatedLauncherText} "
+            + $"preserved_external_hangul={audit.PreservedExternalText}";
+        if (warning)
+            GD.PushWarning(message);
+        else
+            GD.Print(message);
     }
 
     private void OnToggled(bool englishEnabled)
     {
         Loc.SetEnglish(englishEnabled);
         RefreshAppearance();
-        _showStatus?.Invoke(
-            Loc.Tr(
-                "한국어로 전환했습니다.",
-                "English enabled."
-            )
-        );
+        _showStatus?.Invoke(Loc.Tr("한국어로 전환했습니다.", "English enabled."));
     }
 
     private void RefreshAppearance()
@@ -49,9 +77,6 @@ public sealed class LanguageToggle : StyledButton
         TooltipText = englishEnabled
             ? "English is enabled. Tap to use Korean."
             : "영어로 전환하려면 누르세요.";
-        ApplyVariant(
-            _scale,
-            englishEnabled ? ButtonVariant.Accent : ButtonVariant.Secondary
-        );
+        ApplyVariant(_scale, englishEnabled ? ButtonVariant.Accent : ButtonVariant.Secondary);
     }
 }

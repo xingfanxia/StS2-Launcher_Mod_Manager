@@ -73,7 +73,8 @@ public class WorkshopBrowseCard : PanelContainer
             item.Title,
             scale,
             fontSize: 14,
-            align: HorizontalAlignment.Left
+            align: HorizontalAlignment.Left,
+            provenance: TextProvenance.ExternalContent
         );
         titleLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
         info.AddChild(titleLabel);

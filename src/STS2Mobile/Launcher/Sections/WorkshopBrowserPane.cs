@@ -118,7 +118,12 @@ public class WorkshopBrowserPane : VBoxContainer
         _tagsToggleButton.Toggled += pressed => _tagsPanel.Visible = pressed;
         filterRow.AddChild(_tagsToggleButton);
 
-        _statusLabel = new StyledLabel("", scale, fontSize: 12);
+        _statusLabel = new StyledLabel(
+            "",
+            scale,
+            fontSize: 12,
+            provenance: TextProvenance.LauncherTemplateWithExternalContent
+        );
         _statusLabel.SizeFlagsHorizontal = SizeFlags.ExpandFill;
         _statusLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
         AddChild(_statusLabel);
@@ -956,7 +961,13 @@ public class WorkshopBrowserPane : VBoxContainer
         }
         foreach (var tag in _knownTags.OrderBy(t => t, StringComparer.OrdinalIgnoreCase))
         {
-            var chip = new StyledButton(tag, _scale, fontSize: 11, height: 30);
+            var chip = new StyledButton(
+                tag,
+                _scale,
+                fontSize: 11,
+                height: 30,
+                provenance: TextProvenance.ExternalContent
+            );
             chip.ToggleMode = true;
             chip.SetPressedNoSignal(_selectedTags.Contains(tag));
             chip.Toggled += pressed =>

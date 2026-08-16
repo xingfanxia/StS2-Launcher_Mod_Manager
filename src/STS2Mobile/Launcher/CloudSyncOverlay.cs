@@ -45,7 +45,11 @@ public class CloudSyncOverlay : Control
             panel.UpdateSizeFromViewport(vpSize);
             AddChild(panel);
 
-            _statusLabel = new StyledLabel("클라우드 상태 확인 중...", _scale, fontSize: 20);
+            _statusLabel = new StyledLabel(
+                Loc.Tr("클라우드 상태 확인 중...", "Checking cloud status..."),
+                _scale,
+                fontSize: 20
+            );
             panel.Content.AddChild(_statusLabel);
 
             _progressBar = new StyledProgressBar(_scale);
@@ -55,7 +59,11 @@ public class CloudSyncOverlay : Control
             _progressBar.Visible = false;
             panel.Content.AddChild(_progressBar);
 
-            _detailLabel = new StyledLabel("잠시만 기다려 주세요", _scale, fontSize: 13);
+            _detailLabel = new StyledLabel(
+                Loc.Tr("잠시만 기다려 주세요", "Please wait"),
+                _scale,
+                fontSize: 13
+            );
             _detailLabel.Modulate = new Color(0.7f, 0.7f, 0.7f);
             panel.Content.AddChild(_detailLabel);
 
@@ -79,9 +87,9 @@ public class CloudSyncOverlay : Control
                 if (!GodotObject.IsInstanceValid(this) || !IsInsideTree())
                     return;
                 if (IsAlive(_statusLabel))
-                    _statusLabel.Text = status;
+                    _statusLabel.Text = Loc.Authored(status);
                 if (IsAlive(_detailLabel))
-                    _detailLabel.Text = detail;
+                    _detailLabel.Text = Loc.Authored(detail);
                 if (IsAlive(_progressBar))
                     _progressBar.Visible = false;
             })
@@ -100,7 +108,7 @@ public class CloudSyncOverlay : Control
                 if (!GodotObject.IsInstanceValid(this) || !IsInsideTree())
                     return;
                 if (IsAlive(_statusLabel))
-                    _statusLabel.Text = "클라우드 백업 중";
+                    _statusLabel.Text = Loc.Tr("클라우드 백업 중", "Backing up to cloud");
                 if (IsAlive(_progressBar))
                 {
                     _progressBar.Visible = true;

@@ -36,7 +36,8 @@ public class ModListRow : PanelContainer
             BuildTitle(info),
             scale,
             fontSize: 14,
-            align: HorizontalAlignment.Left
+            align: HorizontalAlignment.Left,
+            provenance: TextProvenance.ExternalContent
         );
         titleLabel.SizeFlagsHorizontal = SizeFlags.ExpandFill;
         titleLabel.SizeFlagsVertical = SizeFlags.ShrinkCenter;

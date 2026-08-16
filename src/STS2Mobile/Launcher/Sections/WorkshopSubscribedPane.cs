@@ -56,7 +56,12 @@ public class WorkshopSubscribedPane : VBoxContainer
         SizeFlagsVertical = SizeFlags.ExpandFill;
         AddThemeConstantOverride("separation", (int)(8 * scale));
 
-        _statusLabel = new StyledLabel("", scale, fontSize: 12);
+        _statusLabel = new StyledLabel(
+            "",
+            scale,
+            fontSize: 12,
+            provenance: TextProvenance.LauncherTemplateWithExternalContent
+        );
         _statusLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
         AddChild(_statusLabel);
 
@@ -551,7 +556,8 @@ public class WorkshopSubscribedPane : VBoxContainer
                 c.Title ?? c.ModId,
                 _scale,
                 fontSize: 13,
-                align: HorizontalAlignment.Left
+                align: HorizontalAlignment.Left,
+                provenance: TextProvenance.ExternalContent
             );
             titleLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
             info.AddChild(titleLabel);

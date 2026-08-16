@@ -32,7 +32,13 @@ public class WorkshopDownloadsPane : VBoxContainer
         headerRow.AddThemeConstantOverride("separation", (int)(8 * scale));
         AddChild(headerRow);
 
-        _statusLabel = new StyledLabel("", scale, fontSize: 12, align: HorizontalAlignment.Left);
+        _statusLabel = new StyledLabel(
+            "",
+            scale,
+            fontSize: 12,
+            align: HorizontalAlignment.Left,
+            provenance: TextProvenance.LauncherTemplateWithExternalContent
+        );
         _statusLabel.SizeFlagsHorizontal = SizeFlags.ExpandFill;
         _statusLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
         headerRow.AddChild(_statusLabel);

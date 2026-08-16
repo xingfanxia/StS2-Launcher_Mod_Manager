@@ -133,7 +133,12 @@ public static class Ui
     }
 
     // Small status pill ("Installed", "Update available", ...).
-    public static PanelContainer MakePill(string text, float scale, Color color)
+    public static PanelContainer MakePill(
+        string text,
+        float scale,
+        Color color,
+        TextProvenance provenance = TextProvenance.LauncherAuthored
+    )
     {
         var pill = new PanelContainer();
         var s = new StyleBoxFlat { BgColor = new Color(color.R, color.G, color.B, 0.16f) };
@@ -145,7 +150,7 @@ public static class Ui
         pill.AddThemeStyleboxOverride("panel", s);
         pill.MouseFilter = Control.MouseFilterEnum.Ignore;
 
-        var label = new StyledLabel(text, scale, fontSize: FontMicro);
+        var label = new StyledLabel(text, scale, fontSize: FontMicro, provenance: provenance);
         label.AddThemeColorOverride("font_color", color);
         pill.AddChild(label);
         return pill;

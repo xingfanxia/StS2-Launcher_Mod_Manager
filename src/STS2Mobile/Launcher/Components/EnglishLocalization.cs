@@ -58,7 +58,9 @@ internal static class EnglishLocalization
         ["이미지 캐시 정리"] = "CLEAR IMAGE CACHE",
         ["포션 / 카드 / 유물 이미지가 잘못 표시될 때 사용"] =
             "Use this if potion, card, or relic images display incorrectly",
-        ["이미지 인덱스 캐시 정리\n\n포션 / 카드 / 유물 등 이미지가 잘못 표시될 때 사용하세요.\n게임 텍스처 캐시(약 660개) 를 삭제하고 앱을 재시작합니다.\n\n* 다음 실행이 30~60초 더 걸립니다 (재import)\n* 게임을 다시 다운로드하지 않습니다\n* 세이브 / 진행도 / 로그인 정보는 보존됩니다"] =
+        [
+            "이미지 인덱스 캐시 정리\n\n포션 / 카드 / 유물 등 이미지가 잘못 표시될 때 사용하세요.\n게임 텍스처 캐시(약 660개) 를 삭제하고 앱을 재시작합니다.\n\n* 다음 실행이 30~60초 더 걸립니다 (재import)\n* 게임을 다시 다운로드하지 않습니다\n* 세이브 / 진행도 / 로그인 정보는 보존됩니다"
+        ] =
             "Clear image index cache\n\nUse this if potion, card, or relic images display incorrectly.\nThis deletes about 660 cached game textures and restarts the app.\n\n* The next launch will take 30–60 seconds longer while textures are reimported\n* The game will not be downloaded again\n* Saves, progress, and login information are preserved",
         ["완료"] = "SUCCESS",
         ["실패"] = "FAILED",
@@ -109,9 +111,10 @@ internal static class EnglishLocalization
 
         ["백업하려면 저장공간 접근 권한이 필요합니다.\n권한을 허용한 뒤 다시 시도하세요."] =
             "Storage access is required for backups.\nGrant access, then try again.",
-        ["현재 세이브 데이터를 로컬에 백업할까요?"] =
-            "Back up the current save data locally?",
-        ["Steam 로그인이 만료되었습니다.\n다시 로그인하거나, 클라우드 동기화·창작마당 없이 오프라인으로 계속할 수 있습니다."] =
+        ["현재 세이브 데이터를 로컬에 백업할까요?"] = "Back up the current save data locally?",
+        [
+            "Steam 로그인이 만료되었습니다.\n다시 로그인하거나, 클라우드 동기화·창작마당 없이 오프라인으로 계속할 수 있습니다."
+        ] =
             "Your Steam login has expired.\nSign in again, or continue offline without cloud sync or Workshop access.",
         ["다시 로그인"] = "SIGN IN AGAIN",
         ["오프라인으로 계속"] = "CONTINUE OFFLINE",
@@ -119,7 +122,9 @@ internal static class EnglishLocalization
             "Your Steam login has expired. Please sign in again.",
         ["오프라인 모드 — 클라우드 동기화·창작마당은 재로그인 필요"] =
             "Offline mode — sign in again to use cloud sync and Workshop",
-        ["Steam 로그인이 만료되어 이 기능을 쓸 수 없습니다.\n앱을 재실행한 뒤 다시 로그인해 주세요."] =
+        [
+            "Steam 로그인이 만료되어 이 기능을 쓸 수 없습니다.\n앱을 재실행한 뒤 다시 로그인해 주세요."
+        ] =
             "This feature is unavailable because your Steam login expired.\nRestart the app and sign in again.",
         ["업데이트 적용을 위해 재시작합니다..."] = "Restarting to apply the update...",
         ["앱 재시작 필요"] = "RESTART REQUIRED",
@@ -143,7 +148,9 @@ internal static class EnglishLocalization
         ["아니오"] = "NO",
         ["클라우드 반영에 실패했습니다. 이번 세션은 로컬 전용으로 전환됩니다."] =
             "Could not update Steam Cloud. This session will continue in local-only mode.",
-        ["복제는 완료됐지만 클라우드에는 반영하지 않았습니다.\n다음 동기화에서 클라우드 진행도가 더 높으면 복사본이 되돌려질 수 있습니다."] =
+        [
+            "복제는 완료됐지만 클라우드에는 반영하지 않았습니다.\n다음 동기화에서 클라우드 진행도가 더 높으면 복사본이 되돌려질 수 있습니다."
+        ] =
             "The profile was copied but Steam Cloud was not updated.\nA newer cloud save may overwrite the copy during the next sync.",
         ["백업 목록 확인 중..."] = "Loading backups...",
         ["백업 목록을 확인하지 못했습니다."] = "Could not load the backup list.",
@@ -156,7 +163,9 @@ internal static class EnglishLocalization
             "Updating Steam Cloud timed out. Some files may not have been uploaded.",
         ["클라우드 반영 중 오류가 발생했습니다. 로그를 확인하세요."] =
             "An error occurred while updating Steam Cloud. Check the log.",
-        ["복원은 완료됐지만 클라우드에는 반영하지 않았습니다.\n다음 동기화에서 클라우드 진행도가 더 높으면 복사본이 되돌려질 수 있습니다."] =
+        [
+            "복원은 완료됐지만 클라우드에는 반영하지 않았습니다.\n다음 동기화에서 클라우드 진행도가 더 높으면 복사본이 되돌려질 수 있습니다."
+        ] =
             "The backup was restored but Steam Cloud was not updated.\nA newer cloud save may overwrite it during the next sync.",
 
         ["모드를 관리하려면 저장소 권한이 필요합니다."] =
@@ -167,7 +176,8 @@ internal static class EnglishLocalization
             "Grant access, return here, and tap Refresh.",
         ["창작마당 기능을 쓰려면 Steam 로그인이 필요합니다."] =
             "Sign in to Steam to use Workshop features.",
-        ["아직 구독한 창작마당 모드가 없습니다."] = "You have not subscribed to any Workshop mods yet.",
+        ["아직 구독한 창작마당 모드가 없습니다."] =
+            "You have not subscribed to any Workshop mods yet.",
         ["WORKSHOP 탭에서 둘러보고 구독하면 자동으로 다운로드됩니다."] =
             "Browse the WORKSHOP tab and subscribe to download mods automatically.",
         ["수동 설치본 존재 — 창작마당 버전 미적용"] =
@@ -178,7 +188,9 @@ internal static class EnglishLocalization
         ["Steam 구독은 해제됨; 로컬 정리 건너뜀."] =
             "Steam subscription removed; local cleanup skipped.",
 
-        ["Steam 로그인이 만료되어 클라우드 세이브 기능을 쓸 수 없습니다.\n앱을 재실행한 뒤 다시 로그인해 주세요.\n(로컬 기능은 계속 사용할 수 있습니다)"] =
+        [
+            "Steam 로그인이 만료되어 클라우드 세이브 기능을 쓸 수 없습니다.\n앱을 재실행한 뒤 다시 로그인해 주세요.\n(로컬 기능은 계속 사용할 수 있습니다)"
+        ] =
             "Cloud saves are unavailable because your Steam login expired.\nRestart the app and sign in again.\n(Local features remain available.)",
         ["모드 오류 감지"] = "MOD ERROR DETECTED",
         ["이 알림을 보고 싶지 않으면\n런처 화면 우측 상단의 Debug 토글을 OFF 하세요."] =
@@ -191,14 +203,15 @@ internal static class EnglishLocalization
             "Your Steam login expired or was cancelled. Please sign in again.",
         ["세이브 파일이 불완전(손상)해 클라우드 업로드를 보류했습니다."] =
             "Cloud upload was paused because the save file is incomplete or corrupt.",
-        ["세이브 보호 — 클라우드 덮어쓰기 차단"] =
-            "SAVE PROTECTION — CLOUD OVERWRITE BLOCKED",
+        ["세이브 보호 — 클라우드 덮어쓰기 차단"] = "SAVE PROTECTION — CLOUD OVERWRITE BLOCKED",
         ["이미 수동 설치된 모드와 충돌(덮어쓰지 않음)"] =
             "Conflicts with a manually installed mod (not overwritten)",
         ["모드 매니페스트 없음"] = "Mod manifest is missing",
         ["다운로드 실패"] = "Download failed",
         ["취소됨"] = "Cancelled",
-        ["이번 세션은 세이브를 복구 모드로 열었습니다(게임 버전 차이). 로컬을 클라우드로 덮으시겠습니까?"] =
+        [
+            "이번 세션은 세이브를 복구 모드로 열었습니다(게임 버전 차이). 로컬을 클라우드로 덮으시겠습니까?"
+        ] =
             "This session opened saves in recovery mode due to a game-version difference. Overwrite the cloud copy with local saves?",
         ["덮어쓰기"] = "OVERWRITE",
     };
@@ -212,40 +225,103 @@ internal static class EnglishLocalization
         Make(@"^로컬 (.+) vs Cloud (.+)$", "Local $1 vs Cloud $2"),
         Make(@"^(\d+)개 · (.+)$", "$1 files · $2"),
         Make(@"^(\d+)개$", "$1 files"),
-        Make(@"^이 디바이스와 Steam Cloud의 진행도가 다릅니다 \((\d+)개 프로필\)\.\n어느 쪽을 유지할지 선택하세요\.$", "This device and Steam Cloud differ across $1 profiles.\nChoose which one to keep."),
+        Make(
+            @"^이 디바이스와 Steam Cloud의 진행도가 다릅니다 \((\d+)개 프로필\)\.\n어느 쪽을 유지할지 선택하세요\.$",
+            "This device and Steam Cloud differ across $1 profiles.\nChoose which one to keep."
+        ),
         Make(@"^(\d+)승 / (\d+)패$", "$1 wins / $2 losses"),
         Make(@"^(\d+)막 (\d+)층$", "Act $1, Floor $2"),
         Make(@"^복제 중 오류: (.+)$", "Copy failed: $1"),
         Make(@"^복원 중 오류: (.+)$", "Restore failed: $1"),
         Make(@"^복제 완료 \((\d+)개 파일\)\.$", "Profile copied ($1 files)."),
         Make(@"^복원 완료 \((\d+)개 파일\)\.$", "Backup restored ($1 files)."),
-        Make(@"^복제 완료 및 클라우드 반영됨 \((\d+)개 파일\)\.$", "Profile copied and uploaded to Steam Cloud ($1 files)."),
-        Make(@"^복원 완료 및 클라우드 반영됨 \((\d+)개 파일\)\.$", "Backup restored and uploaded to Steam Cloud ($1 files)."),
-        Make(@"^클라우드 반영 중\.\.\. 남은 파일 (\d+)개$", "Updating Steam Cloud... $1 files remaining"),
+        Make(
+            @"^복제 완료 및 클라우드 반영됨 \((\d+)개 파일\)\.$",
+            "Profile copied and uploaded to Steam Cloud ($1 files)."
+        ),
+        Make(
+            @"^복원 완료 및 클라우드 반영됨 \((\d+)개 파일\)\.$",
+            "Backup restored and uploaded to Steam Cloud ($1 files)."
+        ),
+        Make(
+            @"^클라우드 반영 중\.\.\. 남은 파일 (\d+)개$",
+            "Updating Steam Cloud... $1 files remaining"
+        ),
         Make(@"^클라우드 반영 중\.\.\. (\d+)/(\d+)$", "Updating Steam Cloud... $1/$2"),
         Make(@"^로컬 모드 (\d+)개 설치됨\.$", "$1 local mods installed."),
         Make(@"^가져오는 중 (\d+)/(\d+)…$", "Importing $1/$2…"),
-        Make(@"^신규 (\d+)개 \+ 업데이트 (\d+)개 — 다운로드 중:$", "$1 new + $2 updates — downloading:"),
+        Make(
+            @"^신규 (\d+)개 \+ 업데이트 (\d+)개 — 다운로드 중:$",
+            "$1 new + $2 updates — downloading:"
+        ),
         Make(@"^ (\d+)개 건너뜀\.$", " $1 skipped."),
         Make(@"^(\d+) / (\d+)개$", "$1 / $2 items"),
         Make(@"^다운로드 중 (\d+(?:\.\d+)?)%$", "Downloading $1%"),
         Make(@"^파일 (\d+)개$", "$1 files"),
-        Make(@"^(\d+)/(\d+)개 파일 복원 실패\. 복원 직전 백업: (.+)$", "$1 of $2 files failed to restore. Pre-restore backup: $3"),
-        Make(@"^일부 파일 복사 실패: (.+)\. 사전 백업: (.+)$", "Some files could not be copied: $1. Pre-copy backup: $2"),
-        Make(@"^Welcome back, (.+) \(Steam 로그인 곧 만료 — 재로그인 권장\)$", "Welcome back, $1 (Steam login expires soon — sign in again recommended)"),
-        Make(@"^프로필 (\d+)( · 모드)? → 프로필 (\d+)( · 모드)? 복제\.\n\n대상 슬롯의 현재 데이터가 덮어써집니다\. 진행 전 로컬 백업이 자동 생성됩니다\.(\n\n진행 중이던 런\(current_run\)은 복사되지 않습니다\.)?$", "Copy Profile $1$2 → Profile $3$4.\n\nThe destination profile will be overwritten. A local backup will be created first.$5"),
-        Make(@"^'(.+)'을\(를\) 삭제할까요\?\n저장소에서 모드 폴더가 삭제됩니다\.$", "Remove '$1'?\nThe mod folder will be deleted from this device."),
-        Make(@"^'(.+)'은\(는\) 이미 설치되어 있습니다\. 덮어쓸까요\?$", "'$1' is already installed. Overwrite it?"),
-        Make(@"^새 창작마당 모드 (\d+)개 감지 — 다운로드 중:$", "$1 new Workshop mods found — downloading:"),
-        Make(@"^창작마당 모드 업데이트 (\d+)개 감지 — 다운로드 중:$", "$1 Workshop mod updates found — downloading:"),
-        Make(@"^다음 모드는 더 이상 Steam 에서 구독 중이 아니므로 삭제됩니다:\n(.+)$", "These mods are no longer subscribed on Steam and will be removed:\n$1"),
-        Make(@"^'(.+)'의 최신 창작마당 버전이 있습니다\. 지금 받을까요\?\n\(나중에: 다음 동기화 때 자동 업데이트됩니다\.\)$", "A newer Workshop version of '$1' is available. Download it now?\n(Otherwise it will update during the next sync.)"),
-        Make(@"^수동 설치된 '(.+)'을\(를\) 창작마당 버전\((.+)\)으로 교체할까요\?\n수동 설치 폴더는 삭제됩니다\.$", "Replace the manually installed '$1' with Workshop version $2?\nThe manual-install folder will be deleted."),
-        Make(@"^'(.+)' 구독을 해제할까요\? 기기에서 모드가 삭제됩니다\.$", "Unsubscribe from '$1'? The mod will be removed from this device."),
-        Make(@"^id (\d+) 에 해당하는 창작마당 아이템이 없습니다\(또는 이 계정으로 접근 불가\)\.$", "No Workshop item exists for id $1, or this account cannot access it."),
-        Make(@"^'(.+)' 크기는 (.+) 입니다\. 구독하고 다운로드할까요\?$", "'$1' is $2. Subscribe and download it?"),
-        Make(@"^빈 내용\((\d+) bytes\) 쓰기를 차단했습니다\. 클라우드 상태를 아직 확인하지 못해 안전을 위해 보류합니다\.$", "Blocked an empty write ($1 bytes) until cloud status can be verified."),
-        Make(@"^빈 내용\((\d+) bytes\)이 클라우드의 기존 저장\((\d+) bytes\)을 덮어쓰려 해 차단했습니다\.$", "Blocked an empty write ($1 bytes) from overwriting the existing cloud save ($2 bytes)."),
+        Make(
+            @"^(\d+)/(\d+)개 파일 복원 실패\. 복원 직전 백업: (.+)$",
+            "$1 of $2 files failed to restore. Pre-restore backup: $3"
+        ),
+        Make(
+            @"^일부 파일 복사 실패: (.+)\. 사전 백업: (.+)$",
+            "Some files could not be copied: $1. Pre-copy backup: $2"
+        ),
+        Make(
+            @"^Welcome back, (.+) \(Steam 로그인 곧 만료 — 재로그인 권장\)$",
+            "Welcome back, $1 (Steam login expires soon — sign in again recommended)"
+        ),
+        Make(
+            @"^프로필 (\d+)( · 모드)? → 프로필 (\d+)( · 모드)? 복제\.\n\n대상 슬롯의 현재 데이터가 덮어써집니다\. 진행 전 로컬 백업이 자동 생성됩니다\.(\n\n진행 중이던 런\(current_run\)은 복사되지 않습니다\.)?$",
+            "Copy Profile $1$2 → Profile $3$4.\n\nThe destination profile will be overwritten. A local backup will be created first.$5"
+        ),
+        Make(
+            @"^'(.+)'을\(를\) 삭제할까요\?\n저장소에서 모드 폴더가 삭제됩니다\.$",
+            "Remove '$1'?\nThe mod folder will be deleted from this device."
+        ),
+        Make(
+            @"^'(.+)'은\(는\) 이미 설치되어 있습니다\. 덮어쓸까요\?$",
+            "'$1' is already installed. Overwrite it?"
+        ),
+        Make(
+            @"^새 창작마당 모드 (\d+)개 감지 — 다운로드 중:$",
+            "$1 new Workshop mods found — downloading:"
+        ),
+        Make(
+            @"^창작마당 모드 업데이트 (\d+)개 감지 — 다운로드 중:$",
+            "$1 Workshop mod updates found — downloading:"
+        ),
+        Make(
+            @"^다음 모드는 더 이상 Steam 에서 구독 중이 아니므로 삭제됩니다:\n(.+)$",
+            "These mods are no longer subscribed on Steam and will be removed:\n$1"
+        ),
+        Make(
+            @"^'(.+)'의 최신 창작마당 버전이 있습니다\. 지금 받을까요\?\n\(나중에: 다음 동기화 때 자동 업데이트됩니다\.\)$",
+            "A newer Workshop version of '$1' is available. Download it now?\n(Otherwise it will update during the next sync.)"
+        ),
+        Make(
+            @"^수동 설치된 '(.+)'을\(를\) 창작마당 버전\((.+)\)으로 교체할까요\?\n수동 설치 폴더는 삭제됩니다\.$",
+            "Replace the manually installed '$1' with Workshop version $2?\nThe manual-install folder will be deleted."
+        ),
+        Make(
+            @"^'(.+)' 구독을 해제할까요\? 기기에서 모드가 삭제됩니다\.$",
+            "Unsubscribe from '$1'? The mod will be removed from this device."
+        ),
+        Make(
+            @"^id (\d+) 에 해당하는 창작마당 아이템이 없습니다\(또는 이 계정으로 접근 불가\)\.$",
+            "No Workshop item exists for id $1, or this account cannot access it."
+        ),
+        Make(
+            @"^'(.+)' 크기는 (.+) 입니다\. 구독하고 다운로드할까요\?$",
+            "'$1' is $2. Subscribe and download it?"
+        ),
+        Make(
+            @"^빈 내용\((\d+) bytes\) 쓰기를 차단했습니다\. 클라우드 상태를 아직 확인하지 못해 안전을 위해 보류합니다\.$",
+            "Blocked an empty write ($1 bytes) until cloud status can be verified."
+        ),
+        Make(
+            @"^빈 내용\((\d+) bytes\)이 클라우드의 기존 저장\((\d+) bytes\)을 덮어쓰려 해 차단했습니다\.$",
+            "Blocked an empty write ($1 bytes) from overwriting the existing cloud save ($2 bytes)."
+        ),
         Make(@"^'(.+)' 모드에서 오류가 발생했습니다\.\n(.+)$", "The '$1' mod caused an error.\n$2"),
     };
 
@@ -258,7 +334,10 @@ internal static class EnglishLocalization
         ("클라우드 동기화 중", "Syncing cloud saves"),
         ("권한을 허용한 뒤 다시 시도하세요", "Grant access, then try again"),
         ("저장공간 접근 권한이 필요합니다", "Storage access is required"),
-        ("진행 중이던 런(current_run)은 복사되지 않습니다.", "The active run (current_run) will not be copied."),
+        (
+            "진행 중이던 런(current_run)은 복사되지 않습니다.",
+            "The active run (current_run) will not be copied."
+        ),
         ("로그를 확인하세요", "Check the log"),
     };
 
@@ -289,6 +368,12 @@ internal static class EnglishLocalization
         !string.IsNullOrEmpty(value) && RuntimeKorean.TryGetValue(value, out var korean)
             ? korean
             : value;
+
+    public static bool TryTranslateRegistered(string value, out string translated) =>
+        RuntimeEnglish.TryGetValue(value ?? "", out translated);
+
+    public static bool TryRestoreRegistered(string value, out string restored) =>
+        RuntimeKorean.TryGetValue(value ?? "", out restored);
 
     public static string Translate(string value)
     {
@@ -321,8 +406,5 @@ internal static class EnglishLocalization
     }
 
     private static (Regex Pattern, string Replacement) Make(string pattern, string replacement) =>
-        (
-            new Regex(pattern, RegexOptions.CultureInvariant | RegexOptions.Singleline),
-            replacement
-        );
+        (new Regex(pattern, RegexOptions.CultureInvariant | RegexOptions.Singleline), replacement);
 }

@@ -329,3 +329,85 @@ exercise the native repeated-pre-frame recovery offer, one-shot Compatibility
 restart, explicit Vulkan restore, and HOME/resume exclusion together with the
 Phase 7 matrix. Until an affected GPU supplies equivalent evidence, renderer
 driver remediation remains unclaimed.
+
+## Phase 6 — complete KR/EN launcher coverage
+
+### Confirmed residual and localization boundary
+
+The observed post-PLAY Korean residual had a concrete lifetime cause. The main
+`LauncherUI` owns `LanguageToggle` and its 250 ms legacy refresh timer, but PLAY
+queues that launcher for deletion before the cloud handshake finishes.
+`CloudSyncOverlay` outlives it and continued assigning Korean phase text, so EN
+could regress only after the control that performed refresh had disappeared.
+The cloud overlay now selects its paired initial copy and localizes every later
+status at assignment time. Shared launcher status, busy, download-progress, and
+action-button setters follow the same rule, so new dynamic text does not wait
+for the timer.
+
+The Android atlas-rebuild overlay was a second real gap: both native `TextView`
+strings were Korean-only. It now shares the bounded persisted-language reader
+with the renderer prompt through `nativeText(ko, en)`. The raw in-game mod-guard
+dialog also bypassed the styled-control registry; its title, complete body, and
+OK action now use explicit pairs.
+
+Localization is not applied indiscriminately. Every watched styled control has
+one of three provenances: launcher-authored, launcher template with embedded
+external content, or external content. Pure mod/Workshop titles, descriptions,
+change notes, tags, authors, branch metadata, and user paths are never passed to
+the translator. Mixed controls switch only a pair explicitly registered by
+`Loc.Tr` or the centralized legacy assignment helper, preserving embedded
+external text. The runtime audit reports counts only and never logs the text or
+an identifying hash.
+
+### Static and policy evidence
+
+- `docs/LOCALIZATION_INVENTORY.md` defines the source categories, provenance
+  owners, review rules, and reproducible manifest command.
+- The Roslyn/Java/XML audit enumerates 698 Hangul-bearing entries across 44
+  files: 126 explicit UI pairs, 168 centralized legacy strings, 179 catalog
+  entries, 4 adjacent recovery pairs, 9 Android native pairs, 3 log-only
+  strings, and 209 comments. Unclassified/untranslated launcher UI count is 0.
+- Policy fixtures prove launcher copy translates, a pure external value remains
+  unchanged even when it exactly matches known launcher copy, a mixed pair
+  round-trips while retaining Hangul external content, and unknown authored
+  Hangul is a failure.
+- `tools/localization-audit/tests/run.sh` passes the real tree, injects one
+  untranslated source fixture, and proves the build rejects it.
+- `STS2Mobile.csproj` compiles the provenance/runtime audit implementation with
+  0 warnings and 0 errors. Java compilation of the paired native overlay and
+  renderer dialog passes in the real Gradle APK build.
+
+### Build and reference-device evidence
+
+The pinned amd64 Docker pipeline passed all focused C#/Java/device suites, the
+localization positive and negative gates, 53 game-scoped MemberRefs, 3
+implemented interfaces, all 60 patch/reflection rules, C# publish, Java/JNI
+compilation, 48 Gradle tasks, Workshop sync, and APK signature verification.
+The signed cumulative APK SHA-256 is
+`342056b756674359b69e548368a76bad7718e30b3db007ede39c2d1244ee7856`.
+
+It upgraded the existing reference-device installation in place without
+uninstalling or clearing data. Sanitized reference-device checks then passed:
+
+- launcher KR→EN→KR→EN current-control switching and EN persistence after a
+  process restart;
+- launcher main, Save Manager, Mod Hub LOCAL/WORKSHOP/SUBSCRIBED/DOWNLOADS,
+  Workshop description/change-notes/discussions/comments, and branch picker;
+- dynamically created controls after EN was already selected;
+- the post-launcher cloud overlay at multiple phase times, including the exact
+  former residual surface, with no visible Hangul;
+- the raw in-game mod-guard alert with English title, explanation, and action;
+- the Android-native atlas-rebuild overlay with English title/body, no clipping,
+  and successful return to the launcher.
+
+For stable launcher surfaces the content-free runtime lines reported
+`authored_hangul=0`; external CJK mod/game content remained visible and was not
+counted as a launcher failure. Screenshot OCR emitted no text and found no edge
+clipping on the audited English launcher/native surfaces. Screenshots and raw
+device logs remain outside the repository because they can contain account,
+save-summary, mod, or filesystem data.
+
+Remaining final gate: Phase 7 must still cover fault-only Safe Mode and renderer
+recovery prompts, synthetic cloud-conflict/error/update states, portrait and
+rotation layout, and the complete repeated lifecycle/soak matrix. Those rows
+are not inferred from the static audit or the core reference-device traversal.
