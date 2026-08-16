@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Threading;
 
 namespace STS2Mobile.Launcher;
@@ -11,6 +12,13 @@ namespace STS2Mobile.Launcher;
 internal sealed class GameInstallFaultInjector
 {
     internal const string MarkerName = ".debug_game_install_fault";
+    private const int SigKill = 9;
+
+    [DllImport("libc", EntryPoint = "getpid")]
+    private static extern int GetProcessId();
+
+    [DllImport("libc", EntryPoint = "kill", SetLastError = true)]
+    private static extern int KillProcess(int processId, int signal);
 
     private static readonly HashSet<string> AllowedPoints = new(StringComparer.Ordinal)
     {
@@ -62,6 +70,15 @@ internal sealed class GameInstallFaultInjector
         }
 
         Console.Error.WriteLine($"[GameInstall/Fault] terminating at {point}");
+        // Mono Android's Environment.FailFast can tear down the managed runtime
+        // while leaving the Godot/Android host process and its stale Surface
+        // alive. That produces a frozen 100% screen instead of the process-death
+        // boundary this debug-only hook is meant to exercise. A process-directed
+        // SIGKILL is uncatchable and models power loss without allowing the
+        // transaction to advance beyond the named fault point.
+        if (KillProcess(GetProcessId(), SigKill) == 0)
+            Thread.Sleep(Timeout.Infinite);
+
         Environment.FailFast($"debug game-install fault: {point}");
     }
 

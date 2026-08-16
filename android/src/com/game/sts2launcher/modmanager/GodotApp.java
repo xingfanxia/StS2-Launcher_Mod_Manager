@@ -92,6 +92,9 @@ public class GodotApp extends GodotActivity {
 	private volatile boolean warmupMemoryMonitoring;
 	private volatile boolean warmupLowMemory;
 	private volatile int warmupTrimLevel;
+	private volatile boolean debugWarmupPressure;
+	private volatile String debugNativeCrashStage = "";
+	private volatile String lastLoggedStartupStage = "";
 
 	private volatile boolean pickerActive = false;
 	private final List<File> stagedAtlasCacheDirs = new ArrayList<>();
@@ -122,6 +125,7 @@ public class GodotApp extends GodotActivity {
 		instance = this;
 		consumeCompatibilityRendererRequest();
 		gameDir = new File(getFilesDir(), "game").getAbsolutePath();
+		clearManagedGameInstallFaultOutsideDebug();
 		maybeInjectDebugGameInstallFault("before-install-recovery");
 		try {
 			GameInstallRecovery.recover(getFilesDir());
@@ -286,12 +290,51 @@ public class GodotApp extends GodotActivity {
 				}
 				Log.i(TAG, "[GameInstall/Fault] armed " + installFault);
 			}
+			if ("1".equals(intent.getStringExtra("debug_force_shader_warmup"))) {
+				resetDebugShaderWarmupState();
+			}
+			debugWarmupPressure =
+					"1".equals(intent.getStringExtra("debug_warmup_pressure"));
+			if (debugWarmupPressure) {
+				Log.i(TAG, "[ShaderWarmup/Debug] memory-pressure injection armed");
+			}
+			String nativeCrashStage = intent.getStringExtra("debug_native_crash_stage");
+			if ("launcher-creating".equals(nativeCrashStage)
+					|| "launcher-awaiting-frame".equals(nativeCrashStage)) {
+				debugNativeCrashStage = nativeCrashStage;
+				Log.i(TAG, "[StartupRecovery/Debug] native crash armed at "
+						+ nativeCrashStage);
+			}
 		} catch (IOException ex) {
 			Log.w(TAG, "[Debug] handleDebugIntents IO failure", ex);
 		}
 	}
 
+	private void resetDebugShaderWarmupState() throws IOException {
+		String[] markerNames = new String[] {
+				"shader_warmup_version",
+				"shader_warmup_in_progress",
+				"shader_warmup_result"
+		};
+		for (String markerName : markerNames) {
+			File marker = new File(getFilesDir(), markerName);
+			if (marker.exists() && !marker.delete()) {
+				throw new IOException("failed to reset derived shader warmup state");
+			}
+		}
+		Log.i(TAG, "[ShaderWarmup/Debug] derived warmup state reset");
+	}
+
 	private static final String GAME_INSTALL_FAULT_MARKER = ".debug_game_install_fault";
+
+	private void clearManagedGameInstallFaultOutsideDebug() {
+		if (BuildConfig.VERSION_NAME != null
+				&& BuildConfig.VERSION_NAME.contains("-debug")) return;
+		File marker = new File(getFilesDir(), GAME_INSTALL_FAULT_MARKER);
+		if (marker.exists() && !marker.delete()) {
+			Log.w(TAG, "[GameInstall/Fault] failed to clear stale debug marker");
+		}
+	}
 
 	private void maybeInjectDebugGameInstallFault(String point) {
 		if (BuildConfig.VERSION_NAME == null || !BuildConfig.VERSION_NAME.contains("-debug")) return;
@@ -950,6 +993,9 @@ public class GodotApp extends GodotActivity {
 	// This contains no path, account, device identifier, credential, or user data.
 	public String getWarmupMemorySnapshot() {
 		try {
+			if (debugWarmupPressure && warmupMemoryMonitoring) {
+				return "10|0|-1|-1|-1|-1";
+			}
 			ActivityManager manager =
 					(ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
 			if (manager == null) return "0|0|-1|-1|-1|-1";
@@ -1304,11 +1350,30 @@ public class GodotApp extends GodotActivity {
 	// C# bridge: only bounded, app-authored stage/fingerprint/mod-id values enter
 	// the private journal. StartupRecoveryJournal rejects paths and control chars.
 	public void recordStartupStage(String stage) {
+		String recordedStage = "unknown";
 		synchronized (STARTUP_RECOVERY_LOCK) {
 			if (startupAttemptId == 0L) return;
 			startupRecoveryState = StartupRecoveryJournal.recordStage(
 					loadStartupRecoveryStateLocked(), startupAttemptId, stage);
 			persistStartupRecoveryStateLocked();
+			StartupRecoveryJournal.Attempt attempt =
+					startupRecoveryState.findAttempt(startupAttemptId);
+			if (attempt != null) recordedStage = attempt.stage;
+		}
+		if (!recordedStage.equals(lastLoggedStartupStage)) {
+			lastLoggedStartupStage = recordedStage;
+			Log.i(TAG, "[StartupRecovery] stage=" + recordedStage);
+		}
+		if (recordedStage.equals(debugNativeCrashStage)) {
+			debugNativeCrashStage = "";
+			Log.e(TAG, "[StartupRecovery/Debug] injecting native crash at "
+					+ recordedStage);
+			try {
+				android.system.Os.kill(
+						android.os.Process.myPid(), android.system.OsConstants.SIGABRT);
+			} catch (Exception ex) {
+				Runtime.getRuntime().halt(87);
+			}
 		}
 	}
 

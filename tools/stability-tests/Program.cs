@@ -458,6 +458,15 @@ try
             var model = File.ReadAllText(
                 Path.Combine(repository, "src", "STS2Mobile", "Launcher", "LauncherModel.cs")
             );
+            var faultInjector = File.ReadAllText(
+                Path.Combine(
+                    repository,
+                    "src",
+                    "STS2Mobile",
+                    "Launcher",
+                    "GameInstallFaultInjector.cs"
+                )
+            );
             var android = File.ReadAllText(
                 Path.Combine(
                     repository,
@@ -513,6 +522,41 @@ try
                     StringComparison.Ordinal
                 ),
                 "directory activation must expose every rename fault point"
+            );
+            Assert(
+                faultInjector.Contains(
+                    "DllImport(\"libc\", EntryPoint = \"kill\"",
+                    StringComparison.Ordinal
+                )
+                    && faultInjector.Contains("SigKill = 9", StringComparison.Ordinal)
+                    && faultInjector.IndexOf(
+                        "KillProcess(GetProcessId(), SigKill)",
+                        StringComparison.Ordinal
+                    )
+                        < faultInjector.IndexOf(
+                            "Environment.FailFast($\"debug game-install fault",
+                            StringComparison.Ordinal
+                        ),
+                "managed update fault injection must kill the Android host process"
+            );
+            Assert(
+                android.Contains(
+                    "clearManagedGameInstallFaultOutsideDebug();",
+                    StringComparison.Ordinal
+                )
+                    && android.Contains(
+                        "new File(getFilesDir(), GAME_INSTALL_FAULT_MARKER)",
+                        StringComparison.Ordinal
+                    )
+                    && android.IndexOf(
+                        "clearManagedGameInstallFaultOutsideDebug();",
+                        StringComparison.Ordinal
+                    )
+                        < android.IndexOf(
+                            "GameInstallRecovery.recover",
+                            StringComparison.Ordinal
+                        ),
+                "production startup must discard any debug fault marker before recovery"
             );
             foreach (
                 var faultPoint in new[]

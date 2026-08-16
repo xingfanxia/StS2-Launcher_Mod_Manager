@@ -11,7 +11,18 @@ fail() {
     exit 1
 }
 
-bash -n "$TOOL_DIR/capture.sh" "$SCRIPT_DIR/fake-adb.sh"
+bash -n "$TOOL_DIR/capture.sh" "$TOOL_DIR/run-matrix.sh" "$SCRIPT_DIR/fake-adb.sh"
+
+set +e
+bash "$TOOL_DIR/run-matrix.sh" \
+    --adb "$SCRIPT_DIR/fake-adb.sh" \
+    --serial fake-serial \
+    --output "$TEST_DIR/should-not-exist.tsv" \
+    --scenario home-resume >/dev/null 2>&1
+action_gate_status=$?
+set -e
+[ "$action_gate_status" -eq 1 ] || fail "device-action gate returned $action_gate_status"
+[ ! -e "$TEST_DIR/should-not-exist.tsv" ] || fail "device-action gate wrote evidence"
 
 set +e
 FAKE_QEMU=1 bash "$TOOL_DIR/capture.sh" \
@@ -54,6 +65,11 @@ set -e
 if grep -Eq '(^|[[:space:]])(install|uninstall|clear|force-stop)([[:space:]]|$)|logcat[[:space:]]+-c' \
     "$TOOL_DIR/capture.sh"; then
     fail "capture tool contains a mutating adb operation"
+fi
+
+if grep -Eq '(^|[[:space:]])(install|uninstall|pm[[:space:]]+clear)([[:space:]]|$)' \
+    "$TOOL_DIR/run-matrix.sh"; then
+    fail "matrix tool contains an install, uninstall, or app-data clear operation"
 fi
 
 echo "PASS: device stability capture tests"
