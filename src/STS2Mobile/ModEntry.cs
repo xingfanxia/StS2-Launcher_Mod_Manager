@@ -78,17 +78,23 @@ public static class ModEntry
             Console.Error.WriteLine($"[STS2Mobile] [Diag] TMPDIR override failed: {ex.Message}");
         }
 
-        // Android exposes HOME as /data on some ROMs. .NET's Unix
-        // SpecialFolder.ApplicationData fallback therefore becomes
-        // /data/.config, which an untrusted app cannot create. Device logs show
-        // both DamageMeter and Rewind failing there. XDG_CONFIG_HOME is the
-        // runtime's documented Unix override; point it at app-private storage
-        // before any third-party mod assembly can resolve ApplicationData.
+        // GodotApp sets XDG_CONFIG_HOME from Android's real getFilesDir() before
+        // native/.NET bootstrap. Do not call Godot.OS here: Apply is entered from
+        // gd_mono while native singletons are still settling, and an early
+        // OS.GetUserDataDir() caused a StringName _reset_state abort on device.
+        // Retain a managed-only fallback for unusual hosts where Java setenv failed.
         try
         {
-            var configDir = Path.Combine(OS.GetUserDataDir(), ".config");
+            var configDir = System.Environment.GetEnvironmentVariable("XDG_CONFIG_HOME");
+            if (string.IsNullOrWhiteSpace(configDir))
+            {
+                var assemblyDir = Path.GetDirectoryName(typeof(ModEntry).Assembly.Location);
+                if (string.IsNullOrWhiteSpace(assemblyDir))
+                    throw new InvalidOperationException("STS2Mobile assembly directory is unavailable");
+                configDir = Path.Combine(assemblyDir, ".config");
+                System.Environment.SetEnvironmentVariable("XDG_CONFIG_HOME", configDir);
+            }
             Directory.CreateDirectory(configDir);
-            System.Environment.SetEnvironmentVariable("XDG_CONFIG_HOME", configDir);
             Console.Error.WriteLine($"[STS2Mobile] [Diag] XDG_CONFIG_HOME -> {configDir}");
         }
         catch (Exception ex)

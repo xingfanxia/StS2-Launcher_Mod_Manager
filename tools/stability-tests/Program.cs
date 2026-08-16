@@ -111,13 +111,29 @@ try
             var modEntry = File.ReadAllText(
                 Path.Combine(repository, "src", "STS2Mobile", "ModEntry.cs")
             );
+            var godotApp = File.ReadAllText(
+                Path.Combine(
+                    repository,
+                    "android",
+                    "src",
+                    "com",
+                    "game",
+                    "sts2launcher",
+                    "modmanager",
+                    "GodotApp.java"
+                )
+            );
             Assert(
-                modEntry.Contains(
-                    "Path.Combine(OS.GetUserDataDir(), \".config\")",
+                godotApp.Contains(
+                    "android.system.Os.setenv(\"XDG_CONFIG_HOME\"",
                     StringComparison.Ordinal
                 )
                     && modEntry.Contains(
-                        "SetEnvironmentVariable(\"XDG_CONFIG_HOME\", configDir)",
+                        "GetEnvironmentVariable(\"XDG_CONFIG_HOME\")",
+                        StringComparison.Ordinal
+                    )
+                    && !modEntry.Contains(
+                        "Path.Combine(OS.GetUserDataDir()",
                         StringComparison.Ordinal
                     ),
                 "mods must not inherit Android's unwritable /data/.config fallback"

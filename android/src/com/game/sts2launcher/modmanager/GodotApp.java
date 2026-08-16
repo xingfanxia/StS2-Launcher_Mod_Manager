@@ -105,6 +105,7 @@ public class GodotApp extends GodotActivity {
 	public void onCreate(Bundle savedInstanceState) {
 		instance = this;
 		gameDir = new File(getFilesDir(), "game").getAbsolutePath();
+		configureAppPrivateEnvironment();
 
 		// Start logcat capture as early as possible if the user previously enabled
 		// debug logging — the goal is to capture from the very first init logs
@@ -170,6 +171,23 @@ public class GodotApp extends GodotActivity {
 			Log.i(TAG, "WiFi MulticastLock acquired for LAN discovery");
 		} catch (Exception e) {
 			Log.w(TAG, "Failed to acquire MulticastLock", e);
+		}
+	}
+
+	private void configureAppPrivateEnvironment() {
+		try {
+			File configDir = new File(getFilesDir(), ".config");
+			if (!configDir.isDirectory() && !configDir.mkdirs()) {
+				throw new IOException("Failed to create " + configDir);
+			}
+			// Set the process environment before Godot/.NET bootstrap. Calling
+			// Godot.OS from ModEntry.Apply is too early for Godot singletons and can
+			// abort native startup; android.system.Os writes libc's environment
+			// directly and getFilesDir() remains correct for secondary Android users.
+			android.system.Os.setenv("XDG_CONFIG_HOME", configDir.getAbsolutePath(), true);
+			Log.i(TAG, "[Diag] XDG_CONFIG_HOME -> " + configDir);
+		} catch (Exception ex) {
+			Log.w(TAG, "[Diag] XDG_CONFIG_HOME setup failed", ex);
 		}
 	}
 
