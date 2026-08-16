@@ -24,6 +24,22 @@ require_file "$FMOD_DIR/libfmod.so"
 require_file "$FMOD_DIR/libfmodstudio.so"
 require_file "$FMOD_DIR/libGodotFmod.android.template_release.arm64.so"
 
+# libfmod resolves these Java helpers from JNI_OnLoad. A partial fmod.jar can
+# compile and package successfully, but Android then rejects JNI_OnLoad's FMOD
+# error 28 and the activity crashes before onCreate.
+required_fmod_classes=(
+    org/fmod/AudioDevice.class
+    'org/fmod/FMOD$PluginAudioDeviceCallback.class'
+    'org/fmod/FMOD$PluginBroadcastReceiver.class'
+    org/fmod/FMOD.class
+    org/fmod/MediaCodec.class
+)
+fmod_jar_entries="$(jar tf "$FMOD_DIR/fmod.jar")"
+for class_file in "${required_fmod_classes[@]}"; do
+    grep -Fxq "$class_file" <<<"$fmod_jar_entries" \
+        || fail "Incomplete FMOD Java glue: $class_file is missing from $FMOD_DIR/fmod.jar"
+done
+
 [ ! -e "$WORK_DIR" ] || fail "Work directory already exists: $WORK_DIR"
 mkdir -p "$WORK_DIR" "$OUTPUT_DIR" "$CACHE_DIR/gradle" "$CACHE_DIR/nuget"
 cp -a "$SOURCE_DIR/." "$WORK_DIR/"
@@ -85,6 +101,15 @@ dotnet run --project tools/workshop-sync-tests/workshop-sync-tests.csproj
 
 apk_path="$(find android/build/outputs/apk/mono/release -maxdepth 1 -type f -name '*.apk' -print -quit)"
 [ -n "$apk_path" ] || fail "Gradle completed without producing an APK"
+
+# Verify the helpers survived dependency merging/shrinking and reached DEX.
+unzip -p "$apk_path" classes.dex > "$WORK_DIR/classes.dex"
+"$ANDROID_HOME/build-tools/35.0.0/dexdump" "$WORK_DIR/classes.dex" > "$WORK_DIR/classes.dump"
+for class_file in "${required_fmod_classes[@]}"; do
+    class_descriptor="L${class_file%.class};"
+    grep -Fq "Class descriptor  : '$class_descriptor'" "$WORK_DIR/classes.dump" \
+        || fail "Packaged APK is missing FMOD Java glue: $class_descriptor"
+done
 
 cp -f "$apk_path" "$OUTPUT_DIR/"
 output_name="$(basename "$apk_path")"
