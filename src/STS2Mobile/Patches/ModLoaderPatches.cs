@@ -1,7 +1,10 @@
 using System;
 using System.IO;
+using System.Threading.Tasks;
+using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Modding;
+using STS2Mobile.Launcher;
 
 namespace STS2Mobile.Patches;
 
@@ -25,7 +28,15 @@ public static class ModLoaderPatches
             harmony,
             typeof(ModManager),
             "Initialize",
-            prefix: PatchHelper.Method(typeof(ModLoaderPatches), nameof(InitializePrefix))
+            prefix: PatchHelper.Method(typeof(ModLoaderPatches), nameof(InitializePrefix)),
+            postfix: PatchHelper.Method(typeof(ModLoaderPatches), nameof(InitializePostfix))
+        );
+        PatchHelper.Patch(
+            harmony,
+            typeof(ModManager),
+            "TryLoadMod",
+            prefix: PatchHelper.Method(typeof(ModLoaderPatches), nameof(TryLoadModPrefix)),
+            postfix: PatchHelper.Method(typeof(ModLoaderPatches), nameof(TryLoadModPostfix))
         );
         PatchHelper.Patch(
             harmony,
@@ -47,12 +58,68 @@ public static class ModLoaderPatches
     // rewrite the game shipped in v0.107.0.
     public static bool InitializePrefix(ref IModManagerFileIo fileIo)
     {
+        StartupRecoveryBridge.RecordStage("mod-discovery");
         var originalFileIo = fileIo;
         fileIo = new ExternalModsFileIo(AppPaths.ExternalModsDir, originalFileIo);
         PatchHelper.Log(
             $"[Mods] Redirected ModManager.Initialize fileIo -> {AppPaths.ExternalModsDir}"
         );
         return true;
+    }
+
+    public static void InitializePostfix(Task __result)
+    {
+        if (__result == null)
+        {
+            StartupRecoveryBridge.RecordStage("game-startup");
+            return;
+        }
+        if (__result.IsCompleted)
+        {
+            if (__result.IsCompletedSuccessfully)
+                StartupRecoveryBridge.RecordStage("game-startup");
+            return;
+        }
+
+        _ = __result.ContinueWith(
+            completed =>
+            {
+                if (!completed.IsCompletedSuccessfully)
+                    return;
+                try
+                {
+                    Callable
+                        .From(() => StartupRecoveryBridge.RecordStage("game-startup"))
+                        .CallDeferred();
+                }
+                catch (Exception ex)
+                {
+                    PatchHelper.Log(
+                        $"[StartupRecovery] mod completion bridge failed: {ex.Message}"
+                    );
+                }
+            },
+            TaskScheduler.Default
+        );
+    }
+
+    // TryLoadMod is the last game-owned boundary before a third-party DLL/PCK,
+    // initializer, or Harmony PatchAll executes. An abrupt native exit can leave
+    // the candidate without a postfix; a normal loaded return records success.
+    public static void TryLoadModPrefix(Mod mod)
+    {
+        var modId = mod?.manifest?.id;
+        if (string.IsNullOrWhiteSpace(modId))
+            return;
+        StartupRecoveryBridge.RecordStage("mod-loading");
+        StartupRecoveryBridge.RecordModCandidate(modId);
+    }
+
+    public static void TryLoadModPostfix(Mod mod)
+    {
+        if (mod?.state != ModLoadState.Loaded || string.IsNullOrWhiteSpace(mod.manifest?.id))
+            return;
+        StartupRecoveryBridge.RecordModSuccessful(mod.manifest.id);
     }
 
     // Skip the Steam-backed mod enumeration on Android (no Steamworks runtime).

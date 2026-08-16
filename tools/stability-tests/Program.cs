@@ -256,6 +256,110 @@ try
     );
 
     Run(
+        "startup recovery payload is bounded and fails closed",
+        () =>
+        {
+            var request = StartupRecoveryRequest.Parse("1\n2\nmod-loading\nExampleMod\nLOW_MEMORY");
+            Assert(request.Pending, "pending request");
+            Assert(request.FailureCount == 2, "failure count");
+            Assert(request.Stage == "mod-loading", "stage");
+            Assert(request.ModCandidate == "ExampleMod", "candidate");
+            Assert(request.Reason == "LOW_MEMORY", "reason");
+
+            Assert(!StartupRecoveryRequest.Parse("torn").Pending, "torn payload fails closed");
+            Assert(
+                !StartupRecoveryRequest.Parse("1\n2\nmod-loading\n../escape\nCRASH").Pending,
+                "path-like candidate fails closed"
+            );
+        }
+    );
+
+    Run(
+        "Safe Mode and mod isolation are session-only path filters",
+        () =>
+        {
+            var mods = new[]
+            {
+                new RecoveryModDescriptor("A", "/mods/a", Array.Empty<string>()),
+                new RecoveryModDescriptor("B", "/mods/b", new[] { "A" }),
+                new RecoveryModDescriptor("C", "/mods/c", Array.Empty<string>()),
+                new RecoveryModDescriptor("D", "/mods/d", Array.Empty<string>()),
+            };
+
+            var normal = ModRecoveryPolicy.Build(RecoveryAction.ContinueNormally, "C", mods);
+            Assert(!normal.FiltersMods, "normal launch cannot filter mods");
+            Assert(normal.ShouldExposeFile("/mods", "/mods/c/C.dll"), "normal visibility");
+
+            var safe = ModRecoveryPolicy.Build(RecoveryAction.SafeMode, "C", mods);
+            Assert(safe.FiltersMods && safe.SkipOptionalWarmup, "Safe Mode contract");
+            Assert(safe.ShouldExposeDirectory("/mods", "/mods"), "scan root remains valid");
+            Assert(!safe.ShouldExposeDirectory("/mods", "/mods/a"), "all mod dirs hidden");
+            Assert(!safe.ShouldExposeFile("/mods", "/mods/root.json"), "root mod hidden");
+
+            var exclude = ModRecoveryPolicy.Build(RecoveryAction.ExcludeCandidate, "C", mods);
+            Assert(exclude.ShouldExposeDirectory("/mods", "/mods/a"), "other mod stays visible");
+            Assert(!exclude.ShouldExposeFile("/mods", "/mods/c/C.dll"), "candidate hidden");
+            Assert(
+                exclude.ShouldExposeFile("/mods", "/mods/unmanaged.json"),
+                "candidate exclusion cannot silently hide unrelated root mods"
+            );
+            Assert(
+                ModRecoveryPolicy
+                    .Build(RecoveryAction.ExcludeCandidate, "missing", mods)
+                    .SkipOptionalWarmup,
+                "unknown candidate must fall back to Safe Mode"
+            );
+
+            var bisect = ModRecoveryPolicy.Build(RecoveryAction.BisectFirstHalf, "C", mods);
+            Assert(bisect.ShouldExposeDirectory("/mods", "/mods/a"), "first half A");
+            Assert(bisect.ShouldExposeDirectory("/mods", "/mods/b"), "first half B");
+            Assert(!bisect.ShouldExposeDirectory("/mods", "/mods/c"), "second half C hidden");
+            Assert(!bisect.ShouldExposeDirectory("/mods", "/mods/d"), "second half D hidden");
+
+            var repository = FindRepositoryRoot();
+            var loader = File.ReadAllText(
+                Path.Combine(repository, "src", "STS2Mobile", "Patches", "ModLoaderPatches.cs")
+            );
+            var fileIo = File.ReadAllText(
+                Path.Combine(repository, "src", "STS2Mobile", "Patches", "ExternalModsFileIo.cs")
+            );
+            var launch = File.ReadAllText(
+                Path.Combine(repository, "src", "STS2Mobile", "Patches", "LauncherPatches.cs")
+            );
+            Assert(
+                loader.Contains("TryLoadModPrefix", StringComparison.Ordinal)
+                    && loader.Contains("RecordModCandidate", StringComparison.Ordinal)
+                    && loader.Contains("TryLoadModPostfix", StringComparison.Ordinal)
+                    && loader.Contains("RecordModSuccessful", StringComparison.Ordinal),
+                "mod execution boundary must journal candidate and success"
+            );
+            Assert(
+                fileIo.Contains(
+                    "ModRecoverySession.ShouldExposeDirectory",
+                    StringComparison.Ordinal
+                )
+                    && fileIo.Contains(
+                        "ModRecoverySession.ShouldExposeFile",
+                        StringComparison.Ordinal
+                    ),
+                "every game mod scan must consume the session-only filter"
+            );
+            Assert(
+                launch.IndexOf("ResolveRecoveryAsync", StringComparison.Ordinal)
+                    < launch.IndexOf("WaitForLaunch", StringComparison.Ordinal)
+                    && launch.Contains("SkipOptionalWarmup", StringComparison.Ordinal)
+                    && launch.Contains("ShowRecoverySuccessAsync", StringComparison.Ordinal),
+                "recovery must resolve before PLAY, skip optional warmup, and expose normal restart"
+            );
+            Assert(
+                !fileIo.Contains("Directory.Move", StringComparison.Ordinal)
+                    && !fileIo.Contains("Directory.Delete", StringComparison.Ordinal),
+                "session isolation must never mutate real mod directories"
+            );
+        }
+    );
+
+    Run(
         "Android mod configuration resolves to app-private XDG storage",
         () =>
         {

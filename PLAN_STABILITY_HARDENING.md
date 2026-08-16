@@ -61,7 +61,8 @@ Commit boundary: adaptive warmup + pressure bridge + focused tests。
 
 ## Phase 3 — Crash-loop Safe Mode and mod isolation
 
-Status: in progress
+Status: implementation and automated gate completed; cumulative signed-device crash/fault rows are
+deferred to Phase 7.
 
 1. 在加载任何第三方 mod 前消费 recovery request，显示原因、上次失败阶段和可逆操作。
 2. Safe Mode 使用 session-only override：跳过可选 warmup、临时不加载第三方 mod；
@@ -84,7 +85,7 @@ Commit boundary: one-shot Safe Mode + mod candidate journal/tests。
 
 ## Phase 4 — Transactional game update and interruption recovery
 
-Status: pending
+Status: in progress
 
 1. 建模完整版本元组：branch、Steam manifest/build、PCK identity、game assembly set、
    atlas/cache stamp；确定唯一 active marker 的提交点。

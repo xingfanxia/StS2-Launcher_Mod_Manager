@@ -18,5 +18,13 @@
       Include="../../src/STS2Mobile/Launcher/ShaderWarmupMemoryPolicy.cs"
       Link="ShaderWarmupMemoryPolicy.cs"
     />
+    <Compile
+      Include="../../src/STS2Mobile/Launcher/ModRecoveryPolicy.cs"
+      Link="ModRecoveryPolicy.cs"
+    />
+    <Compile
+      Include="../../src/STS2Mobile/Launcher/StartupRecoveryRequest.cs"
+      Link="StartupRecoveryRequest.cs"
+    />
   </ItemGroup>
 </Project>

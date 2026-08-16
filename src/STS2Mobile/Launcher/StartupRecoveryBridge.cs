@@ -37,6 +37,38 @@ internal static class StartupRecoveryBridge
     public static void MarkHealthy(string terminalStage) =>
         Call("markStartupHealthy", terminalStage);
 
+    public static bool TryGetRecoveryRequest(out StartupRecoveryRequest request)
+    {
+        request = StartupRecoveryRequest.None;
+        try
+        {
+            var app = LauncherModel.GetGodotApp();
+            if (app == null)
+                return true;
+            if (!(bool)app.Call("isPreviousExitReportReady"))
+                return false;
+            request = StartupRecoveryRequest.Parse((string)app.Call("getStartupRecoveryRequest"));
+            return true;
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log($"[StartupRecovery] request bridge failed: {ex.Message}");
+            return true;
+        }
+    }
+
+    public static void ClearRecoveryRequest()
+    {
+        try
+        {
+            LauncherModel.GetGodotApp()?.Call("clearStartupRecoveryRequest");
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log($"[StartupRecovery] clear bridge failed: {ex.Message}");
+        }
+    }
+
     private static void Call(string method, string value)
     {
         try

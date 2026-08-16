@@ -8,6 +8,7 @@ required	method	MegaCrit.Sts2.Core.Saves.CloudSaveStore	SyncCloudToLocal	bare	-
 required	method	MegaCrit.Sts2.Core.Saves.SaveManager	ConstructDefault	bare	-
 required	method	MegaCrit.Sts2.Core.Saves.SaveManager	InitSettingsData	bare	-
 required	method	MegaCrit.Sts2.Core.Modding.ModManager	Initialize	bare	-
+required	method	MegaCrit.Sts2.Core.Modding.ModManager	TryLoadMod	bare	-
 required	method	MegaCrit.Sts2.Core.Modding.ModManager	ReadSteamMods	bare	-
 required	method	MegaCrit.Sts2.Core.Modding.ModManager	ReadModManifest	bare	-
 required	method	MegaCrit.Sts2.Core.Platform.Null.NullPlatformUtilStrategy	GetRawLanguage	bare	-

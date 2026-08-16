@@ -191,6 +191,7 @@ public static class LauncherPatches
             // The native atlas-rebuild overlay swallows touches, so release it
             // before waiting for the user's PLAY input.
             LauncherModel.GetGodotApp()?.Call("hideLoadingOverlay");
+            await StartupRecoveryFlow.ResolveRecoveryAsync(launcher);
             if (await launcher.WaitForLaunch())
             {
                 userLaunched = true;
@@ -210,6 +211,7 @@ public static class LauncherPatches
             // A half-initialized UI cannot produce PLAY, so fail open to the game
             // instead of leaving a blank Control or faulting on a null model.
             PatchHelper.Log("Launcher initialization failed; bypassing launcher for this boot");
+            await StartupRecoveryFlow.ResolveRecoveryAsync(gameNode, allowChoice: false);
         }
         if (!userLaunched)
         {
@@ -305,7 +307,7 @@ public static class LauncherPatches
         // has its own full-screen UI).
         overlay?.QueueFree();
 
-        if (ShaderWarmupScreen.NeedsWarmup())
+        if (!ModRecoverySession.Current.SkipOptionalWarmup && ShaderWarmupScreen.NeedsWarmup())
         {
             StartupRecoveryBridge.RecordStage("shader-warmup");
             var warmup = new ShaderWarmupScreen();
@@ -349,6 +351,7 @@ public static class LauncherPatches
         {
             await (Task)gameStartup.Invoke(game, null);
             StartupRecoveryBridge.MarkHealthy("game-ready");
+            await StartupRecoveryFlow.ShowRecoverySuccessAsync(gameNode);
         }
         catch (TargetInvocationException ex)
         {
