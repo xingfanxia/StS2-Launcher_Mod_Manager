@@ -7,6 +7,7 @@ public final class StartupRecoveryJournalTest {
 		testTwoMatchingCrashesRequestRecovery();
 		testDifferentStageOrFingerprintBreaksTheSequence();
 		testPlannedAndUserExitsNeverCount();
+		testBackgroundExitNeverCounts();
 		testHealthyStartupClearsTheSequence();
 		testExpiredFailureStartsAnew();
 		testCodecRejectsTornState();
@@ -101,6 +102,26 @@ public final class StartupRecoveryJournalTest {
 		state = StartupRecoveryJournal.markHealthy(next.state, next.attemptId, "game-ready");
 		check("healthy startup clears failure count", state.failureCount == 0);
 		check("healthy startup clears recovery request", !state.recoveryPending);
+	}
+
+	private static void testBackgroundExitNeverCounts() {
+		StartupRecoveryJournal.State state = crashOnce(
+				"launcher-awaiting-frame", "facefeed", 25_000L);
+		StartupRecoveryJournal.BeginResult next =
+				StartupRecoveryJournal.beginAttempt(state, 27_000L);
+		state = StartupRecoveryJournal.setFingerprint(next.state, next.attemptId, "facefeed");
+		state = StartupRecoveryJournal.recordStage(
+				state, next.attemptId, "launcher-awaiting-frame");
+		state = StartupRecoveryJournal.markForeground(state, next.attemptId, false);
+		StartupRecoveryJournal.BeginResult after =
+				StartupRecoveryJournal.beginAttempt(state, 28_000L);
+		state = StartupRecoveryJournal.reconcileExit(
+				after.state,
+				PreviousExitClassifier.REASON_CRASH_NATIVE,
+				27_500L,
+				28_100L);
+		check("background native exit clears the crash sequence", state.failureCount == 0);
+		check("background native exit never requests recovery", !state.recoveryPending);
 	}
 
 	private static void testExpiredFailureStartsAnew() {

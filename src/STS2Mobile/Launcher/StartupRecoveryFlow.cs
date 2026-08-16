@@ -11,6 +11,7 @@ namespace STS2Mobile.Launcher;
 internal static class StartupRecoveryFlow
 {
     private static bool _resolvedForProcess;
+    private static bool _rendererNoticeShown;
 
     public static async Task<ModRecoveryPlan> ResolveRecoveryAsync(
         Node owner,
@@ -19,6 +20,9 @@ internal static class StartupRecoveryFlow
     {
         if (_resolvedForProcess)
             return ModRecoverySession.Current;
+
+        if (allowChoice)
+            await ShowCompatibilityRendererNoticeAsync(owner);
 
         Control probe = allowChoice ? CreateProbe(owner) : null;
         var request = await WaitForRequestAsync(owner);
@@ -112,6 +116,48 @@ internal static class StartupRecoveryFlow
         }
         app.Call("restartApp");
         PatchHelper.Log("[Recovery] restartApp returned unexpectedly after recovery success");
+    }
+
+    private static async Task ShowCompatibilityRendererNoticeAsync(Node owner)
+    {
+        if (
+            _rendererNoticeShown
+            || !StartupRecoveryBridge.IsCompatibilityRendererSession()
+            || !GodotObject.IsInstanceValid(owner)
+            || !owner.IsInsideTree()
+        )
+            return;
+
+        _rendererNoticeShown = true;
+        var completion = new DialogCompletion<bool>(false);
+        var dialog = new StyledDialog(
+            Loc.Tr(
+                "이번 실행에서는 시작 충돌 복구를 위해 OpenGL 호환 렌더러를 사용합니다.\n\n"
+                    + "이 변경은 이번 실행에만 적용되며 다음 실행은 자동으로 기본 Vulkan을 사용합니다. 지금 Vulkan으로 다시 시작하거나 호환 모드로 계속할 수 있습니다.",
+                "This run is using the OpenGL compatibility renderer for startup recovery.\n\n"
+                    + "The change applies only to this run; the next launch automatically returns to Vulkan. Restart with Vulkan now, or continue in compatibility mode."
+            ),
+            LauncherUI.ResolveScale(owner),
+            okLabel: Loc.Tr("Vulkan으로 다시 시작", "Restart with Vulkan"),
+            cancelLabel: Loc.Tr("호환 모드로 계속", "Continue in compatibility mode")
+        )
+        {
+            ZIndex = 301,
+        };
+        dialog.Confirmed += () => completion.Complete(true);
+        dialog.Cancelled += () => completion.Complete(false);
+        owner.AddChild(dialog);
+
+        if (!await completion.Task)
+            return;
+        var app = LauncherModel.GetGodotApp();
+        if (app == null)
+        {
+            PatchHelper.Log("[Renderer] Vulkan restart bridge unavailable");
+            return;
+        }
+        app.Call("restartApp");
+        PatchHelper.Log("[Renderer] restartApp returned unexpectedly after Vulkan restore");
     }
 
     private static async Task<StartupRecoveryRequest> WaitForRequestAsync(Node owner)

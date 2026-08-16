@@ -13,7 +13,7 @@ import java.util.Set;
 // SharedPreferences adapter; keeping lifecycle decisions here makes crash-loop
 // behavior deterministic and testable without booting Android or Godot.
 final class StartupRecoveryJournal {
-	static final int SCHEMA_VERSION = 1;
+	static final int SCHEMA_VERSION = 2;
 	static final int RECOVERY_THRESHOLD = 2;
 	static final long FAILURE_WINDOW_MS = 24L * 60L * 60L * 1_000L;
 	private static final int MAX_ATTEMPTS = 8;
@@ -31,6 +31,7 @@ final class StartupRecoveryJournal {
 		final String fingerprint;
 		final String modCandidate;
 		final String lastSuccessfulMod;
+		final boolean foreground;
 		final boolean healthy;
 		final boolean resolved;
 
@@ -42,6 +43,7 @@ final class StartupRecoveryJournal {
 				String fingerprint,
 				String modCandidate,
 				String lastSuccessfulMod,
+				boolean foreground,
 				boolean healthy,
 				boolean resolved) {
 			this.id = id;
@@ -51,43 +53,49 @@ final class StartupRecoveryJournal {
 			this.fingerprint = fingerprint;
 			this.modCandidate = modCandidate;
 			this.lastSuccessfulMod = lastSuccessfulMod;
+			this.foreground = foreground;
 			this.healthy = healthy;
 			this.resolved = resolved;
 		}
 
 		Attempt withStage(String value) {
 			return new Attempt(id, startedAtMs, plannedAtMs, value, fingerprint,
-					modCandidate, lastSuccessfulMod, healthy, resolved);
+					modCandidate, lastSuccessfulMod, foreground, healthy, resolved);
 		}
 
 		Attempt withFingerprint(String value) {
 			return new Attempt(id, startedAtMs, plannedAtMs, stage, value,
-					modCandidate, lastSuccessfulMod, healthy, resolved);
+					modCandidate, lastSuccessfulMod, foreground, healthy, resolved);
 		}
 
 		Attempt withCandidate(String value) {
 			return new Attempt(id, startedAtMs, plannedAtMs, stage, fingerprint,
-					value, lastSuccessfulMod, healthy, resolved);
+					value, lastSuccessfulMod, foreground, healthy, resolved);
 		}
 
 		Attempt withSuccessfulMod(String value) {
 			return new Attempt(id, startedAtMs, plannedAtMs, stage, fingerprint,
-					"", value, healthy, resolved);
+					"", value, foreground, healthy, resolved);
 		}
 
 		Attempt withPlannedAt(long value) {
 			return new Attempt(id, startedAtMs, value, stage, fingerprint,
-					modCandidate, lastSuccessfulMod, healthy, resolved);
+					modCandidate, lastSuccessfulMod, foreground, healthy, resolved);
+		}
+
+		Attempt withForeground(boolean value) {
+			return new Attempt(id, startedAtMs, plannedAtMs, stage, fingerprint,
+					modCandidate, lastSuccessfulMod, value, healthy, resolved);
 		}
 
 		Attempt withHealthy(String value) {
 			return new Attempt(id, startedAtMs, plannedAtMs, value, fingerprint,
-					"", lastSuccessfulMod, true, resolved);
+					"", lastSuccessfulMod, foreground, true, resolved);
 		}
 
 		Attempt withResolved() {
 			return new Attempt(id, startedAtMs, plannedAtMs, stage, fingerprint,
-					modCandidate, lastSuccessfulMod, healthy, true);
+					modCandidate, lastSuccessfulMod, foreground, healthy, true);
 		}
 	}
 
@@ -192,7 +200,7 @@ final class StartupRecoveryJournal {
 			attempts.remove(removable >= 0 ? removable : 0);
 		}
 		attempts.add(new Attempt(id, Math.max(0L, nowMs), 0L,
-				"android-on-create", "unknown", "", "", false, false));
+				"android-on-create", "unknown", "", "", true, false, false));
 		State next = new State(id + 1L, attempts, state.failureStage,
 				state.failureFingerprint, state.failureAtMs, state.failureCount,
 				state.recoveryPending, state.recoveryCandidate, state.recoveryReason);
@@ -224,6 +232,12 @@ final class StartupRecoveryJournal {
 		return replace(state, attemptId, attempt.withPlannedAt(Math.max(0L, nowMs)));
 	}
 
+	static State markForeground(State state, long attemptId, boolean foreground) {
+		Attempt attempt = state == null ? null : state.findAttempt(attemptId);
+		if (attempt == null) return state == null ? empty() : state;
+		return replace(state, attemptId, attempt.withForeground(foreground));
+	}
+
 	static State markHealthy(State state, long attemptId, String terminalStage) {
 		State safe = state == null ? empty() : state;
 		Attempt attempt = safe.findAttempt(attemptId);
@@ -253,7 +267,8 @@ final class StartupRecoveryJournal {
 		State resolved = replace(state, match.id, match.withResolved());
 		boolean planned = PreviousExitClassifier.isPlannedExit(
 				reason, exitTimestampMs, match.plannedAtMs);
-		if (planned || !PreviousExitClassifier.isActionableFailure(reason)) {
+		if (planned || !match.foreground
+				|| !PreviousExitClassifier.isActionableFailure(reason)) {
 			return clearFailure(resolved);
 		}
 
@@ -302,6 +317,7 @@ final class StartupRecoveryJournal {
 					.append('|').append(attempt.plannedAtMs)
 					.append('|').append(attempt.healthy ? '1' : '0')
 					.append('|').append(attempt.resolved ? '1' : '0')
+					.append('|').append(attempt.foreground ? '1' : '0')
 					.append('|').append(hex(attempt.stage))
 					.append('|').append(hex(attempt.fingerprint))
 					.append('|').append(hex(attempt.modCandidate))
@@ -335,17 +351,18 @@ final class StartupRecoveryJournal {
 			Set<Long> ids = new HashSet<>();
 			for (int i = 1; i < lines.length; i++) {
 				String[] fields = lines[i].split("\\|", -1);
-				if (fields.length != 10 || !"A".equals(fields[0])) return invalidDecode();
+				if (fields.length != 11 || !"A".equals(fields[0])) return invalidDecode();
 				long id = positiveLong(fields[1]);
 				if (!ids.add(id)) return invalidDecode();
 				Attempt attempt = new Attempt(
 						id,
 						nonNegativeLong(fields[2]),
 						nonNegativeLong(fields[3]),
-						unhex(fields[6]),
 						unhex(fields[7]),
 						unhex(fields[8]),
 						unhex(fields[9]),
+						unhex(fields[10]),
+						parseBoolean(fields[6]),
 						parseBoolean(fields[4]),
 						parseBoolean(fields[5]));
 				if (!attempt.stage.equals(sanitizeStage(attempt.stage))

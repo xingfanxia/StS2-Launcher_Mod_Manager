@@ -187,6 +187,10 @@ public static class LauncherPatches
         if (launcher.Initialize())
         {
             PatchHelper.Log("Launcher UI displayed");
+            StartupRecoveryBridge.RecordStage("launcher-awaiting-frame");
+            var tree = launcher.GetTree();
+            if (tree != null)
+                await launcher.ToSignal(tree, SceneTree.SignalName.ProcessFrame);
             StartupRecoveryBridge.RecordStage("launcher-ready");
             // The native atlas-rebuild overlay swallows touches, so release it
             // before waiting for the user's PLAY input.

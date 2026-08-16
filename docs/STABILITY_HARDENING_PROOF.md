@@ -258,3 +258,74 @@ Remaining final device gate: use the cumulative signed debug-controllable APK
 for public↔public-beta and at least three representative process-death points;
 prove the recovered marker, PCK, full assembly set and selected branch are one
 complete old or new tuple, then verify mods, saves and login remain unchanged.
+
+## Phase 5 — renderer compatibility recovery
+
+### Capability result
+
+Godot's Android command line was first exposed behind a debug-version-only
+intent override. The reference ARM64 device then started the same game PCK with
+`--rendering-method gl_compatibility --rendering-driver opengl3`. Runtime output
+reported OpenGL ES 3.2, the launcher reached its visible PLAY surface, the user
+handoff completed, ordinary third-party mods loaded, and the game reached the
+interactive main menu in about 86 seconds. A subsequent cold start without the
+override reported the normal Vulkan API and reached the launcher again.
+
+This satisfies only the capability question. The reference device is not a
+known affected GPU, so it does not prove that Compatibility fixes a reported
+driver fault. Compatibility also logged that one particle sub-emitter feature
+is unsupported; it remains an explicit recovery mode rather than the default.
+The implementation follows Godot 4.5's documented Android Compatibility
+requirements and command-line selection, and diagnostics now query
+`RenderingServer` for the actual runtime method/driver instead of repeating
+project defaults:
+
+- <https://docs.godotengine.org/en/4.5/about/system_requirements.html>
+- <https://docs.godotengine.org/en/4.5/classes/class_projectsettings.html>
+
+### Decision and rollback contract
+
+- Vulkan remains the default and no renderer setting is changed persistently.
+- The launcher records `launcher-awaiting-frame`, yields one Godot process
+  frame, and only then records `launcher-ready`. Renderer recovery is eligible
+  only after two matching journal failures in `android-on-create`,
+  `launcher-creating`, or `launcher-awaiting-frame`.
+- The eligible exit classes are deliberately narrow: signaled, native crash,
+  or initialization failure. LMK, ANR, managed/mod evidence, one-off failures,
+  and every post-usable-frame stage are rejected.
+- `onPause` persists foreground=false before Godot tears down the Android
+  Surface. Any later native or LMK exit therefore resets rather than increments
+  the startup sequence. Driver log text such as `QueuePresentKHR` is never a
+  decision input.
+- Android presents the recovery suggestion without requiring a Godot-rendered
+  dialog. Acceptance stores one boolean, performs a planned restart, and
+  consumes/removes that boolean before the next renderer initialization. A
+  Compatibility session exposes a launcher dialog to restart immediately with
+  Vulkan or continue; either way, the following launch defaults to Vulkan.
+- The native dialog reads only the bounded launcher language preference and has
+  paired Korean/English copy. It does not inspect credentials, saves, mods,
+  account identity, device identifiers, or paths outside app-private storage.
+
+### Focused, build, and device evidence
+
+- Pure JVM tests pass the repeated pre-frame native case and reject one crash,
+  `launcher-ready`, LMK, ANR, and a mod candidate. Journal tests additionally
+  prove that a background native exit cannot accumulate or request recovery.
+- C# source contracts require the first-frame stage ordering, consume-once
+  preference, actual Vulkan restore UI, and absence of driver-log matching.
+- `STS2Mobile.csproj` compiled against the matched Godot 4.5 assemblies with 0
+  warnings and 0 errors. The pinned amd64 pipeline passed all C#/Java/device
+  focused suites, 53 game-scoped MemberRefs, 3 implemented interfaces, all 60
+  required patch/reflection rules, Java/JNI compilation, 47 Gradle tasks, and
+  Workshop sync. The unsigned artifact SHA-256 is
+  `89aab953cb67da86509a2b5d9930fec6764e19d141a4f7a293d5bda163ef89a8`.
+- Sanitized reference-device observation: Compatibility reported OpenGL ES 3.2
+  and reached the game menu with mods; the no-override cold start reported
+  Vulkan 1.3.284 and reached `Launcher UI displayed`. No account, device serial,
+  private path, save content, or full log is stored in the repository.
+
+Remaining cumulative device gate: install the final signed build once and
+exercise the native repeated-pre-frame recovery offer, one-shot Compatibility
+restart, explicit Vulkan restore, and HOME/resume exclusion together with the
+Phase 7 matrix. Until an affected GPU supplies equivalent evidence, renderer
+driver remediation remains unclaimed.

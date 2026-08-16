@@ -4,6 +4,7 @@ import org.godotengine.godot.Godot;
 import org.godotengine.godot.GodotActivity;
 
 import android.app.ActivityManager;
+import android.app.AlertDialog;
 import android.app.ApplicationExitInfo;
 import android.content.Intent;
 import android.net.Uri;
@@ -78,11 +79,15 @@ public class GodotApp extends GodotActivity {
 	private static final int REQ_SAF_ZIP = 4201;
 	private static final String LAST_REPORTED_EXIT_PREF = "last_reported_exit_timestamp";
 	private static final String PLANNED_EXIT_PREF = "planned_exit_requested_at";
-	private static final String STARTUP_RECOVERY_PREF = "startup_recovery_journal_v1";
+	private static final String STARTUP_RECOVERY_PREF = "startup_recovery_journal_v2";
+	private static final String RENDERER_COMPATIBILITY_ONCE_PREF =
+			"renderer_compatibility_once";
 	private static final Object STARTUP_RECOVERY_LOCK = new Object();
 	private static StartupRecoveryJournal.State startupRecoveryState;
 	private static long startupAttemptId;
 	private static volatile boolean previousExitReportReady;
+	private static volatile boolean compatibilityRendererSession;
+	private volatile boolean nativeRendererPromptActive;
 	private boolean gameInstallReady;
 	private volatile boolean warmupMemoryMonitoring;
 	private volatile boolean warmupLowMemory;
@@ -115,6 +120,7 @@ public class GodotApp extends GodotActivity {
 	@Override
 	public void onCreate(Bundle savedInstanceState) {
 		instance = this;
+		consumeCompatibilityRendererRequest();
 		gameDir = new File(getFilesDir(), "game").getAbsolutePath();
 		maybeInjectDebugGameInstallFault("before-install-recovery");
 		try {
@@ -837,6 +843,21 @@ public class GodotApp extends GodotActivity {
 	@Override
 	public List<String> getCommandLine() {
 		List<String> commands = new ArrayList<>(super.getCommandLine());
+		Intent launchIntent = getIntent();
+		boolean debugOverride = BuildConfig.VERSION_NAME != null
+				&& BuildConfig.VERSION_NAME.contains("-debug")
+				&& launchIntent != null
+				&& "gl_compatibility".equals(
+						launchIntent.getStringExtra("debug_renderer_override"));
+		if (debugOverride) compatibilityRendererSession = true;
+		if (compatibilityRendererSession) {
+			commands.add("--rendering-method");
+			commands.add("gl_compatibility");
+			commands.add("--rendering-driver");
+			commands.add("opengl3");
+			Log.i(TAG, "[Renderer] using one-shot gl_compatibility/opengl3 session"
+					+ (debugOverride ? " (debug capability probe)" : ""));
+		}
 		File pckFile = new File(gameDir, PCK_FILE);
 		if (gameInstallReady && pckFile.exists()) {
 			commands.add("--main-pack");
@@ -876,8 +897,18 @@ public class GodotApp extends GodotActivity {
 
 	@Override
 	public void onResume() {
+		markStartupForeground(true);
 		super.onResume();
 		updateWindowAppearance.run();
+	}
+
+	@Override
+	public void onPause() {
+		// Persist background state before Godot tears its Surface down. A later LMK
+		// or native QueuePresentKHR failure from this lifecycle path must never be
+		// counted as a failed foreground launch or renderer crash loop.
+		markStartupForeground(false);
+		super.onPause();
 	}
 
 	@Override
@@ -1113,8 +1144,86 @@ public class GodotApp extends GodotActivity {
 		} catch (Exception ex) {
 			Log.w(TAG, "[PreviousExit] query failed", ex);
 		} finally {
+			maybeShowRendererRecoveryPrompt();
 			previousExitReportReady = true;
 		}
+	}
+
+	private void consumeCompatibilityRendererRequest() {
+		if (compatibilityRendererSession) return;
+		SharedPreferences prefs = getSharedPreferences("sts2mobile", MODE_PRIVATE);
+		if (!prefs.getBoolean(RENDERER_COMPATIBILITY_ONCE_PREF, false)) return;
+		compatibilityRendererSession = true;
+		if (!prefs.edit().remove(RENDERER_COMPATIBILITY_ONCE_PREF).commit()) {
+			Log.w(TAG, "[Renderer] failed to consume one-shot renderer request");
+		}
+	}
+
+	private void maybeShowRendererRecoveryPrompt() {
+		if (compatibilityRendererSession || isFinishing() || isDestroyed()) return;
+		StartupRecoveryJournal.RecoveryRequest request;
+		synchronized (STARTUP_RECOVERY_LOCK) {
+			request = StartupRecoveryJournal.getRecoveryRequest(
+					loadStartupRecoveryStateLocked());
+		}
+		if (!RendererRecoveryPolicy.shouldOffer(request)) return;
+
+		nativeRendererPromptActive = true;
+		runOnUiThread(() -> {
+			if (isFinishing() || isDestroyed()) {
+				nativeRendererPromptActive = false;
+				return;
+			}
+			boolean english = isEnglishLauncherLanguage();
+			String title = english ? "Graphics startup recovery" : "그래픽 시작 복구";
+			String message = english
+					? "The launcher exited twice before its first usable frame. This can be caused by a graphics driver, but the cause is not confirmed. Restart once with the OpenGL compatibility renderer? Vulkan remains the default for later launches."
+					: "런처가 첫 사용 가능 화면 전에 두 번 종료되었습니다. 그래픽 드라이버가 원인일 수 있지만 확정된 것은 아닙니다. OpenGL 호환 렌더러로 한 번만 다시 시작할까요? 이후 실행의 기본값은 Vulkan으로 유지됩니다.";
+			new AlertDialog.Builder(this)
+					.setTitle(title)
+					.setMessage(message)
+					.setPositiveButton(
+							english ? "Try compatibility mode" : "호환 모드 시도",
+							(dialog, which) -> requestCompatibilityRendererRestart())
+					.setNegativeButton(
+							english ? "Keep Vulkan" : "Vulkan 유지",
+							(dialog, which) -> nativeRendererPromptActive = false)
+					.setCancelable(false)
+					.show();
+		});
+	}
+
+	private void requestCompatibilityRendererRestart() {
+		boolean committed = getSharedPreferences("sts2mobile", MODE_PRIVATE)
+				.edit()
+				.putBoolean(RENDERER_COMPATIBILITY_ONCE_PREF, true)
+				.commit();
+		nativeRendererPromptActive = false;
+		if (!committed) {
+			Log.w(TAG, "[Renderer] failed to persist one-shot renderer request");
+			return;
+		}
+		Log.i(TAG, "[Renderer] user accepted one-shot compatibility restart");
+		restartApp();
+	}
+
+	private boolean isEnglishLauncherLanguage() {
+		File preference = new File(getFilesDir(), "launcher_language.cfg");
+		if (preference.isFile() && preference.length() <= 4_096L) {
+			try (BufferedReader reader = new BufferedReader(
+					new InputStreamReader(new FileInputStream(preference),
+							java.nio.charset.StandardCharsets.UTF_8))) {
+				String line;
+				while ((line = reader.readLine()) != null) {
+					String compact = line.replace(" ", "").trim();
+					if ("language=\"en\"".equalsIgnoreCase(compact)) return true;
+					if ("language=\"ko\"".equalsIgnoreCase(compact)) return false;
+				}
+			} catch (IOException ex) {
+				Log.w(TAG, "[Renderer] launcher language preference unavailable", ex);
+			}
+		}
+		return !"ko".equalsIgnoreCase(Locale.getDefault().getLanguage());
 	}
 
 	private void beginStartupAttempt() {
@@ -1130,6 +1239,15 @@ public class GodotApp extends GodotActivity {
 			persistStartupRecoveryStateLocked();
 			Log.i(TAG, "[StartupRecovery] attempt=" + startupAttemptId
 					+ " stage=android-on-create");
+		}
+	}
+
+	private void markStartupForeground(boolean foreground) {
+		synchronized (STARTUP_RECOVERY_LOCK) {
+			if (startupAttemptId == 0L) return;
+			startupRecoveryState = StartupRecoveryJournal.markForeground(
+					loadStartupRecoveryStateLocked(), startupAttemptId, foreground);
+			persistStartupRecoveryStateLocked();
 		}
 	}
 
@@ -1234,7 +1352,11 @@ public class GodotApp extends GodotActivity {
 	}
 
 	public boolean isPreviousExitReportReady() {
-		return previousExitReportReady;
+		return previousExitReportReady && !nativeRendererPromptActive;
+	}
+
+	public boolean isCompatibilityRendererSession() {
+		return compatibilityRendererSession;
 	}
 
 	// Newline-delimited fields are safe because candidate validation rejects all

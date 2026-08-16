@@ -86,21 +86,18 @@ public static class RenderDiagnosticPatches
             PatchHelper.Log($"{Tag} adapter info unavailable: {ex.Message}");
         }
 
-        // 렌더링 백엔드 (Forward+ / Mobile / Compatibility)
+        // Runtime backend. ProjectSettings describes the project default and can
+        // be stale when command-line recovery overrides select Compatibility.
         try
         {
-            var method = ProjectSettings.GetSetting("rendering/renderer/rendering_method");
-            var methodMobile = ProjectSettings.GetSetting(
-                "rendering/renderer/rendering_method.mobile"
-            );
-            var driver = ProjectSettings.GetSetting("rendering/rendering_device/driver");
             PatchHelper.Log(
-                $"{Tag} rendering_method={method} mobile={methodMobile} driver={driver}"
+                $"{Tag} runtime_rendering_method={RenderingServer.GetCurrentRenderingMethod()} "
+                    + $"runtime_driver={RenderingServer.GetCurrentRenderingDriverName()}"
             );
         }
         catch (Exception ex)
         {
-            PatchHelper.Log($"{Tag} project rendering settings unavailable: {ex.Message}");
+            PatchHelper.Log($"{Tag} runtime rendering backend unavailable: {ex.Message}");
         }
 
         // 디스플레이 / DPI

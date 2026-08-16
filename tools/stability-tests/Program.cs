@@ -534,6 +534,19 @@ try
                     $"missing deterministic Android fault hook {faultPoint}"
                 );
             }
+            Assert(
+                android.Contains("debug_renderer_override", StringComparison.Ordinal)
+                    && android.Contains(
+                        "commands.add(\"gl_compatibility\")",
+                        StringComparison.Ordinal
+                    )
+                    && android.Contains("commands.add(\"opengl3\")", StringComparison.Ordinal)
+                    && android.Contains(
+                        "VERSION_NAME.contains(\"-debug\")",
+                        StringComparison.Ordinal
+                    ),
+                "renderer capability probe must be explicit and unavailable in production builds"
+            );
         }
     );
 
@@ -592,6 +605,69 @@ try
                     Environment.SetEnvironmentVariable("XDG_CONFIG_HOME", previous);
                 }
             }
+        }
+    );
+
+    Run(
+        "renderer recovery is repeated-pre-frame, foreground-only, and one-shot",
+        () =>
+        {
+            var repository = FindRepositoryRoot();
+            var javaRoot = Path.Combine(
+                repository,
+                "android",
+                "src",
+                "com",
+                "game",
+                "sts2launcher",
+                "modmanager"
+            );
+            var godotApp = File.ReadAllText(Path.Combine(javaRoot, "GodotApp.java"));
+            var policy = File.ReadAllText(Path.Combine(javaRoot, "RendererRecoveryPolicy.java"));
+            var patches = File.ReadAllText(
+                Path.Combine(repository, "src", "STS2Mobile", "Patches", "LauncherPatches.cs")
+            );
+            var flow = File.ReadAllText(
+                Path.Combine(repository, "src", "STS2Mobile", "Launcher", "StartupRecoveryFlow.cs")
+            );
+
+            Assert(
+                policy.Contains("RECOVERY_THRESHOLD", StringComparison.Ordinal)
+                    && policy.Contains("launcher-awaiting-frame", StringComparison.Ordinal)
+                    && !policy.Contains("\"QueuePresentKHR\"", StringComparison.Ordinal),
+                "renderer recovery must use durable pre-frame state, never driver log text"
+            );
+            Assert(
+                godotApp.IndexOf("markStartupForeground(false);", StringComparison.Ordinal)
+                    < godotApp.IndexOf("super.onPause();", StringComparison.Ordinal),
+                "background state must persist before Godot tears down its Surface"
+            );
+            Assert(
+                godotApp.Contains("RENDERER_COMPATIBILITY_ONCE_PREF", StringComparison.Ordinal)
+                    && godotApp.Contains(
+                        ".remove(RENDERER_COMPATIBILITY_ONCE_PREF)",
+                        StringComparison.Ordinal
+                    )
+                    && godotApp.Contains(
+                        "isCompatibilityRendererSession",
+                        StringComparison.Ordinal
+                    ),
+                "compatibility renderer selection must be consumed once and exposed to recovery UI"
+            );
+            Assert(
+                patches.IndexOf("launcher-awaiting-frame", StringComparison.Ordinal)
+                    < patches.IndexOf("SceneTree.SignalName.ProcessFrame", StringComparison.Ordinal)
+                    && patches.IndexOf(
+                        "SceneTree.SignalName.ProcessFrame",
+                        StringComparison.Ordinal
+                    ) < patches.IndexOf("launcher-ready", StringComparison.Ordinal),
+                "launcher-ready must be recorded only after a main-loop frame"
+            );
+            Assert(
+                flow.Contains("Restart with Vulkan", StringComparison.Ordinal)
+                    && flow.Contains("Continue in compatibility mode", StringComparison.Ordinal),
+                "a compatibility session must offer an explicit Vulkan restore path"
+            );
         }
     );
 

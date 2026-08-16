@@ -57,6 +57,20 @@ internal static class StartupRecoveryBridge
         }
     }
 
+    public static bool IsCompatibilityRendererSession()
+    {
+        try
+        {
+            var app = LauncherModel.GetGodotApp();
+            return app != null && (bool)app.Call("isCompatibilityRendererSession");
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log($"[Renderer] session bridge failed: {ex.Message}");
+            return false;
+        }
+    }
+
     public static void ClearRecoveryRequest()
     {
         try

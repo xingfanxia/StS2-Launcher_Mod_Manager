@@ -107,7 +107,8 @@ Commit boundary: update transaction guards + fault-injection tests。
 
 ## Phase 5 — Renderer compatibility recovery
 
-Status: pending
+Status: implementation, automated gate, and renderer capability check completed; cumulative signed
+recovery-prompt/device matrix is deferred to Phase 7.
 
 1. 首先验证当前 APK/Godot build 是否真的包含可启动的 compatibility renderer。
 2. renderer failure 判定只使用“首个可用帧之前的重复失败 + exit/stage 证据”；
