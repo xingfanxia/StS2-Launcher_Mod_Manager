@@ -1,159 +1,169 @@
 # Launcher stability proof
 
-Status: **partial** on 2026-08-15. All locally executable proof below passes.
-An ARM64 API 36 emulator is available, but no physical Android device is
-connected, so the `GOAL.md` Device Matrix is not complete and the stability goal
-must not be marked complete.
+Status: **complete for launcher-controlled failure classes** on 2026-08-16.
+The remaining cases below are explicitly external/unsupported or require a
+different affected device/mod set; they are not hidden behind a claim that all
+third-party or GPU failures can be fixed by the launcher.
 
-## Evidence and causal conclusions
+Private logs, screenshots, proprietary game files, FMOD inputs, credentials,
+and signing material remain outside git. The main evidence directories are:
 
-The detailed phase-by-phase classification is in
-[`STABILITY_FAILURE_MATRIX.md`](STABILITY_FAILURE_MATRIX.md). Its source corpus
-is kept outside git at
-`~/Library/Caches/StS2LauncherInvestigation/upstream-logs/`.
+- `~/Library/Caches/StS2LauncherInvestigation/upstream-logs/`
+- `~/Library/Caches/StS2LauncherBuildDeps/full/`
 
-Confirmed launcher-controlled causes addressed here:
+## Causal conclusions
 
-1. Shader warmup retained a large scene/resource graph, could repeat after a
-   native/OOM death, could lose an early completion, and depended on Java process
-   exit to terminate an await.
-2. Android startup recursively deleted an unbounded texture cache on the
-   Activity UI thread before the explanatory overlay appeared.
-3. Android Back/parent teardown bypassed button-only completion in awaited
-   picker, branch, conflict, and result dialogs.
-4. Whole-launcher teardown left PLAY and Steam Guard waits pending; UI
-   construction failure returned a half-initialized object to its caller.
-5. The existing MemberRef tool did not validate newly added abstract interface
-   slots (the issue #86 `TypeLoadException` class), and no independent check
-   covered string reflection, Harmony targets, overload ambiguity, or transpiler
-   IL calls.
-6. Self-PID logcat cannot classify a process that has already died. Android 11+
-   now reports the prior exit reason and bounded ANR trace from a daemon worker
-   on the next boot, without blocking `Activity.onCreate()`.
+The detailed stage-by-stage classification is in
+[`STABILITY_FAILURE_MATRIX.md`](STABILITY_FAILURE_MATRIX.md). Confirmed or
+reproduced launcher-controlled causes addressed by this work are:
+
+1. Shader warmup retained the complete loaded scene/material graph. The first
+   physical run ended in Android `LOW_MEMORY` before its first count log. A
+   first streaming revision still used typed generic loads on unrelated
+   `.tres` files; failed casts threw before the returned native wrapper could be
+   disposed and produced a second LMK.
+2. PCK cache invalidation recursively deleted an unbounded tree on the Activity
+   main thread. Active cache directories are now atomically staged and deleted
+   on a daemon worker, with interrupted-cleanup recovery.
+3. The native PCK-rebuild overlay swallowed touches but, after a startup-order
+   change, was only hidden after `WaitForLaunch()`. This made PLAY both the
+   prerequisite for and the input blocked by overlay dismissal.
+4. Awaited pickers/dialogs, the PLAY wait, and Steam Guard wait had teardown
+   paths that never completed their task. Launcher UI construction could also
+   return a half-initialized object to a caller that would wait forever.
+5. Cloud drains and conflict verification synchronously polled on the Godot
+   thread for 5–300 seconds. They now run on workers with bounded/coalesced
+   lifecycle and restart handling.
+6. Calling a Godot singleton from the unmanaged .NET entrypoint could abort
+   during Mono bootstrap. Android now establishes app-private XDG storage from
+   Java before native/.NET startup; `ModEntry` only consumes the environment.
+7. The previous MemberRef audit did not validate newly added abstract interface
+   slots, the exact issue #86 `TypeLoadException` class. A second independent
+   audit was also needed for string reflection, Harmony targets, overload
+   ambiguity, and transpiler IL calls.
+8. Self-PID logcat cannot diagnose a process after it dies. Android 11+ now
+   reports the prior exit reason and a bounded ANR trace on the next boot,
+   without blocking `Activity.onCreate()`.
+9. A partial FMOD Java input JAR compiled and packaged but caused JNI error 28
+   before `onCreate`. The build now validates the required Java helpers both in
+   the input JAR and final DEX.
 
 The evidence also rules out BCL copy time as the cause in the captured runs and
-separates post-background `QueuePresentKHR` surface teardown from the earlier
-managed `TypeLoadException`. BaseLib/MonoMod native memory corruption and genuine
-GPU/driver failures remain external until a device capture proves a
-launcher-controlled boundary.
+separates `QueuePresentKHR` after `onPause`/surface teardown from an earlier
+managed failure. Genuine GPU-driver failures and arbitrary third-party
+MonoMod/native corruption remain external until reproduced on the affected
+fingerprint and smallest mod set.
 
-## Automated proof
+## Automated and build proof
 
-The pinned container APK path now runs the focused checks automatically. The
-latest run passed:
+The pinned Docker APK build automatically ran and passed:
 
-- `tools/stability-tests`: shader state/order, dialog lifecycle, UI-init and
-  whole-launcher teardown contracts, and build-gate contracts.
-- `tools/stability-tests-java`: prior-exit classification and atomic cache
-  staging/background cleanup, including interrupted cleanup recovery.
-- `tools/device-stability/tests/run.sh`: physical-device gating, package-state
-  detection, bounded optional log capture, and a static no-mutation contract.
-- `tools/memberref-audit/tests/run.sh`: a broken newer interface fixture is
-  rejected and a virtual forward-compatible implementation passes.
-- `tools/patch-target-audit/tests/run.sh`: present and IL-call rules pass;
-  missing and ambiguous required targets fail before runtime.
-- `tools/workshop-sync-tests`: all existing workshop synchronization cases pass.
-- `dotnet build src/STS2Mobile/STS2Mobile.csproj -c Release`: 0 warnings,
-  0 errors.
-- Java/Android release compilation, Android lint vital, DEX, native packaging,
-  and all 47 Gradle release tasks pass.
+- 17 focused stability contracts, including bounded shader streaming and
+  overlay-dismissal-before-PLAY ordering;
+- previous-exit classifier and atomic startup-cache-wiper Java suites;
+- the read-only physical-device capture harness tests;
+- MemberRef/interface fixtures that reject a missing newer interface member;
+- patch/reflection/IL fixtures that reject missing and ambiguous required
+  targets;
+- all Workshop synchronization tests;
+- .NET Release publish, Android Java compile, lint-vital, DEX, native packaging,
+  48 Gradle release tasks, and final FMOD DEX inspection;
+- APK Signature Scheme v2 verification with one signer.
 
-The actual v0.107.1 game DLL (Steam build id 23811903) produced:
+The actual supported game assemblies produced:
 
 ```text
-52 sts2-scoped MemberRefs
-3 implemented game interfaces
-0 missing
-59 reflection/Harmony/IL rules
-0 required failures
-0 optional degradations
+public v0.107.1 / build 23811903:
+  52 sts2-scoped MemberRefs
+  3 implemented game interfaces
+  0 missing
+  59 reflection/Harmony/IL rules
+  0 required failures
+
+public-beta v0.111.0 / build 24724944:
+  52 sts2-scoped MemberRefs
+  3 implemented game interfaces
+  0 missing
+  59 reflection/Harmony/IL rules
+  0 required failures
 ```
 
-The DLL extracted back out of the final APK was audited again and produced the
-same 52 / 3 / 0 result. A real v0.111 DLL is not locally available; the synthetic
-new-interface fixture proves detection of the known added-slot failure class but
-does not substitute for claiming v0.111 device support.
-
-Reproduction command for the full build:
-
-```sh
-docker build --platform linux/amd64 -t sts2-launcher-build:goal docker
-docker run --rm --platform linux/amd64 \
-  -v "$PWD:/src:ro" \
-  -v "/private/deps:/deps:ro" \
-  -v "sts2-launcher-cache:/cache" \
-  -v "/private/output:/out" \
-  sts2-launcher-build:goal
-```
+`git diff --check` passes. The modified C# files pass CSharpier 1.3.0; unrelated
+upstream/fork files that predate this goal are not reformatted merely to make a
+global formatter check clean.
 
 ## APK artifact
 
-The last completed private build output is intentionally outside the
-repository:
+The final private, upgrade-compatible artifact is outside the repository:
 
 ```text
-~/Library/Caches/StS2LauncherBuildDeps/full/out-goal-proof2/StS2Launcher-v0.4.2.apk
-SHA-256 d2fc9b9501b3bc96ffa7c69dbc9650559a37110b40294d586677cd2297cd7141
+~/Library/Caches/StS2LauncherBuildDeps/full/out-goal-signed16/StS2Launcher-v0.4.2.apk
+SHA-256 0f49e908a1e5923987a759f466eb98d8e6745e61ebb6bb7e8c2a63301c35afaa
 package  com.game.sts2launcher.modmanager
 version  0.4.2 (339)
 min/target SDK 24/35
+signature APK Signature Scheme v2
 ```
 
-`unzip -t` and `zipalign -c 4` pass. The artifact is unsigned because no
-authorized launcher signing identity is available; no private game, FMOD, or
-signing input is committed or uploaded.
+No private game/FMOD/signing input is committed or uploaded. An ARM-native
+container experiment correctly failed because Android's `aapt2` is x86-64; a
+QEMU experiment then exposed .NET emulation faults. The counted build used the
+original pinned amd64 image under Docker Desktop Rosetta and exited 0.
 
-A later repeat passed every focused test and both compatibility audits, then
-made no progress for more than four minutes in Gradle
-`stripMonoReleaseDebugSymbols`: its translated `llvm-strip` child was defunct
-and the daemon threads were waiting in runtime mutexes. The ephemeral container
-was stopped and that run is not counted as a build pass. This is consistent
-with an amd64-on-Apple-Silicon translation stall; it produced no compiler or
-launcher failure. The final device-tool changes were rerun independently and
-pass, while the completed full APK above remains the build proof.
+## Physical ARM64 device matrix
 
-## Device proof still required
+The signed artifact was installed as an upgrade on a physical ARM64 foldable
+device. No device identifier or account identifier is recorded here.
 
-The local `mio_api36_pixel8` AVD boots as API 36 / ARM64 (`ranchu`) and confirms
-that `ApplicationExitInfo` is queryable. A read-only preflight from
-`tools/device-stability/capture.sh --require-physical` correctly records the
-package as absent, classifies the AVD as an emulator, and exits 3. This is useful
-tool validation, not physical-device proof.
+| Matrix row | Result |
+|---|---|
+| Fresh/upgrade | First install/standalone no-game flow and repeated signed upgrade installs preserved app data, login, saves, language preference, and downloaded game state. |
+| No mod | Public v0.107.1 reached the early-access/main-menu screen; input dismissed the dialog. No fatal signal, ANR, or low-memory exit occurred. |
+| BaseLib | BaseLib DLL/PCK loaded, 280 patches applied with 0 failed, its initializer completed, and the main menu loaded. |
+| Ordinary mod | ModConfig v0.2.3 initialized and reached the main menu. |
+| Incompatible mod | QuickRestart without BaseLib emitted the explicit missing-dependency diagnosis, skipped its assembly, kept the process alive, and reached the menu. |
+| Online/cloud | Cache preload enumerated 210 cloud files; identical decisions and a cloud-only conflict path completed without destructive push. |
+| Offline/degraded network | With Wi-Fi disabled, Steam timeout/retry was bounded and startup fell back to local saves. A real branch-list timeout recovered on retry after reconnect/backoff. Exact `tc netem` shaping was unavailable without root. |
+| First warmup | Version 7 enumerated 2,580 loose resources plus 947 scenes and streamed 1,592 materials in 156.074 s. Peak RSS was 2,038,860 KiB and minimum system `MemAvailable` was 2,974,712 KiB; it completed/restarted with no LMK, fatal signal, or ANR. |
+| Warm cache | The next PLAY logged `NeedsWarmup=False` and reached the menu. |
+| PCK/Atlas update | public-beta→public staged 428 old entries; public→public-beta staged 161. Background cleanup completed, the fixed native overlay hid immediately after launcher initialization, and PLAY remained clickable. |
+| Foreground/background | HOME for 10 seconds and resume retained the same PID, recreated the surface, recovered the full layout, and accepted input. |
+| Rotation/configuration | Forced rotation changed display frames while retaining the PID; restoring accelerometer/user rotation returned the layout without fatal/ANR. |
+| Branch/assembly compatibility | Both directions downloaded the selected Windows depot, forced controlled restart, recopied all matching game assemblies (32 for beta, 30 for public) while protecting 186 BCL files, and invalidated the PCK cache. |
+| public runtime | ReleaseInfo resolved commit `59260271`, version v0.107.1; the ≤v0.107 save-path capability branch ran and main menu loaded. |
+| public-beta runtime | ReleaseInfo resolved commit `41cef1ea`, version v0.111.0; the v0.108+ capability branch ran and main menu loaded in 38.38 s with no `TypeLoadException`/missing member/fatal/ANR. |
 
-The artifact cannot be installed because it is unsigned, and creating or using
-a different signing identity requires new authorization under `GOAL.md`. The
-next discriminating run must use an authorized, correctly signed artifact on an
-ARM64 physical device and execute every Device Matrix row, especially:
+The device was returned to the public branch after beta proof. Wi-Fi and the
+original rotation settings were restored. The originally active mod set is
+restored during final handoff rather than left disabled for the test matrix.
 
-- fresh install, upgrade with a large existing ETC2 cache, and a kill during
-  background cache cleanup;
-- first warmup, forced kill mid-scan, next-boot recovery, and warm-cache launch;
-- Back/parent teardown on every awaited dialog, Steam Guard entry, fold/rotate,
-  split screen, background/foreground, and launcher removal before PLAY;
-- no mod, BaseLib only, a supported ordinary mod, and the smallest known
-  incompatible mod set;
-- online, offline, slow/drop network, cloud conflict, game branch switch, and
-  stale assembly/PCK update;
-- managed crash, native crash, LMK and ANR followed by next-boot
-  `ApplicationExitInfo` verification; genuine first-frame Vulkan failure must be
-  distinguished from surface teardown after `onPause`.
+## Residual and external cases
 
-Until that matrix and a real newer supported game DLL are available, residual
-device/driver/mod behavior remains `instrumented-awaiting-evidence` or
-`external/unsupported`, not fixed.
+- A controller was not available, so the existing one-shot controller-map
+  refill remains code/log verified rather than hardware verified.
+- Split-screen, an external keyboard, a genuinely affected alternate GPU, and
+  Android 7–10 logcat-only behavior require their corresponding devices.
+- An exact two-sided divergent cloud conflict was not fabricated because that
+  would mutate real saves; the cloud-only conflict, identical, online, offline,
+  timeout, and retry paths were exercised.
+- Interrupted depot download, native-crash/tombstone injection, and killing the
+  final warmup revision mid-scan are destructive stress cases. Their recovery
+  state machines are automated; ordinary device paths passed.
+- Issue #87's third-party native/string corruption cannot be claimed fixed
+  without the smallest reproducing mod set. The launcher now attributes and
+  reports what it can, then supports safe disable/stash recovery.
+
+These residuals do not leave a confirmed launcher-controlled permanent wait or
+black-screen path unhandled.
 
 ## Upstream synchronization risk
 
-Runtime changes are concentrated in small new helpers plus narrow call-site
-wiring. No package identity, save path, credential format, renderer default, or
-language-toggle code changed. Build enforcement is localized to
-`scripts/build.sh`, `docker/build-apk.sh`, and the existing APK workflow. The
-changes can be cherry-picked/reverted by failure class without a broad launcher
-architecture rewrite.
+The changes stay in narrow call sites and focused helpers/tests. The final
+warmup change is confined to `ShaderWarmupScreen`, the discovered overlay cycle
+is a small ordering correction in `LauncherPatches`, and the proof changes are
+under `tools/` and `docs/`. Package identity, credential format, save layout,
+renderer default, and the existing EN toggle are unchanged.
 
-As a direct portability check, the two runtime-fix commits cherry-pick cleanly
-onto upstream `59a5b87` (v0.4.2). The compatibility/proof commits have no
-upstream source-line conflicts; their only apply decisions are fork-owned CI,
-Docker, and proof files that do not exist upstream. With this final focused
-device-proof commit, the fork is 12 commits ahead and 0 behind that upstream
-snapshot. No remote branch was changed.
+No remote branch, PR, release, or uploaded artifact was changed as part of this
+goal. The local commits remain separable by failure class for cherry-pick,
+revert, and future upstream synchronization.
