@@ -321,6 +321,37 @@ try
     );
 
     Run(
+        "atlas rebuild overlay releases launcher input before PLAY wait",
+        () =>
+        {
+            var repository = FindRepositoryRoot();
+            var launcherPatches = File.ReadAllText(
+                Path.Combine(repository, "src", "STS2Mobile", "Patches", "LauncherPatches.cs")
+            );
+            var initialized = launcherPatches.IndexOf(
+                "PatchHelper.Log(\"Launcher UI displayed\");",
+                StringComparison.Ordinal
+            );
+            var overlayHidden = launcherPatches.IndexOf(
+                "Call(\"hideLoadingOverlay\")",
+                StringComparison.Ordinal
+            );
+            var playWait = launcherPatches.IndexOf(
+                "await launcher.WaitForLaunch()",
+                StringComparison.Ordinal
+            );
+
+            Assert(initialized >= 0, "game launcher must report successful initialization");
+            Assert(overlayHidden >= 0, "game launcher must dismiss the native rebuild overlay");
+            Assert(playWait >= 0, "game launcher must await explicit PLAY");
+            Assert(
+                initialized < overlayHidden && overlayHidden < playWait,
+                "the touch-swallowing native rebuild overlay must be hidden once launcher UI is ready"
+            );
+        }
+    );
+
+    Run(
         "whole-launcher teardown releases pending launch and auth waits",
         () =>
         {

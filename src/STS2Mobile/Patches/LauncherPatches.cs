@@ -184,6 +184,9 @@ public static class LauncherPatches
         if (launcher.Initialize())
         {
             PatchHelper.Log("Launcher UI displayed");
+            // The native atlas-rebuild overlay swallows touches, so release it
+            // before waiting for the user's PLAY input.
+            LauncherModel.GetGodotApp()?.Call("hideLoadingOverlay");
             if (await launcher.WaitForLaunch())
             {
                 userLaunched = true;
@@ -196,6 +199,7 @@ public static class LauncherPatches
         }
         else
         {
+            LauncherModel.GetGodotApp()?.Call("hideLoadingOverlay");
             // The launcher is optional once valid game files are already loaded.
             // A half-initialized UI cannot produce PLAY, so fail open to the game
             // instead of leaving a blank Control or faulting on a null model.
@@ -214,10 +218,6 @@ public static class LauncherPatches
         // yet. Hold this across cloud/no-cloud, warmup/no-warmup, and GameStartup
         // so local-only boots have the same Back/auto-quit protection.
         using var startupInputLease = StartupInputGate.Hold(gameNode);
-
-        // Issue #23 — dismiss the native ETC2-rebuild overlay if it was shown
-        // during this boot. No-op when overlay was never installed.
-        LauncherModel.GetGodotApp()?.Call("hideLoadingOverlay");
 
         var instanceField = typeof(SaveManager).GetField(
             "_instance",
