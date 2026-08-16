@@ -10,7 +10,7 @@ try
         "fresh install requires warmup",
         () =>
         {
-            var state = new ShaderWarmupState(root, version: 5);
+            var state = new ShaderWarmupState(root, version: 7);
             var result = state.Check();
             Assert(result.NeedsWarmup, result.Reason);
             Assert(!result.RecoveredInterruptedAttempt, "fresh install must not be recovery");
@@ -22,11 +22,11 @@ try
         () =>
         {
             Reset(root);
-            var state = new ShaderWarmupState(root, version: 5);
+            var state = new ShaderWarmupState(root, version: 7);
             state.Begin();
             state.Complete();
 
-            var result = new ShaderWarmupState(root, version: 5).Check();
+            var result = new ShaderWarmupState(root, version: 7).Check();
             Assert(!result.NeedsWarmup, result.Reason);
             Assert(!result.RecoveredInterruptedAttempt, "normal completion is not recovery");
             Assert(!File.Exists(state.AttemptMarkerPath), "attempt marker must be removed");
@@ -38,15 +38,15 @@ try
         () =>
         {
             Reset(root);
-            var firstProcess = new ShaderWarmupState(root, version: 5);
+            var firstProcess = new ShaderWarmupState(root, version: 7);
             firstProcess.Begin();
 
-            var nextProcess = new ShaderWarmupState(root, version: 5);
+            var nextProcess = new ShaderWarmupState(root, version: 7);
             var result = nextProcess.Check();
             Assert(!result.NeedsWarmup, result.Reason);
             Assert(result.RecoveredInterruptedAttempt, "interrupted attempt must be recovered");
             Assert(
-                File.ReadAllText(nextProcess.CompletedMarkerPath).Trim() == "5",
+                File.ReadAllText(nextProcess.CompletedMarkerPath).Trim() == "7",
                 "recovery marker"
             );
             Assert(!File.Exists(nextProcess.AttemptMarkerPath), "recovered attempt marker removed");
@@ -58,9 +58,9 @@ try
         () =>
         {
             Reset(root);
-            new ShaderWarmupState(root, version: 4).Begin();
+            new ShaderWarmupState(root, version: 6).Begin();
 
-            var result = new ShaderWarmupState(root, version: 5).Check();
+            var result = new ShaderWarmupState(root, version: 7).Check();
             Assert(result.NeedsWarmup, result.Reason);
             Assert(
                 !result.RecoveredInterruptedAttempt,
@@ -81,7 +81,7 @@ try
     );
 
     Run(
-        "shader scan does not retain the scene resource cache",
+        "shader scan keeps the live material set batch-bounded",
         () =>
         {
             var repository = FindRepositoryRoot();
@@ -99,6 +99,36 @@ try
             Assert(
                 !warmup.Contains("ResourceLoader.CacheMode.Reuse", StringComparison.Ordinal),
                 "warmup must not repopulate the reusable resource cache"
+            );
+            Assert(
+                warmup.Contains("CollectWarmupResourcePaths(", StringComparison.Ordinal),
+                "warmup must enumerate lightweight paths before loading resources"
+            );
+            Assert(
+                warmup.Contains("if (batch.Count >= BatchSize)", StringComparison.Ordinal)
+                    && warmup.Contains("await FlushMaterialBatchAsync", StringComparison.Ordinal),
+                "warmup must render and release a bounded batch before loading more resources"
+            );
+            Assert(
+                warmup.Contains("material.Dispose();", StringComparison.Ordinal),
+                "warmup must explicitly release each uncached material after rendering"
+            );
+            Assert(
+                !warmup.Contains("ResourceLoader.Load<Material>", StringComparison.Ordinal)
+                    && !warmup.Contains("ResourceLoader.Load<Shader>", StringComparison.Ordinal),
+                "a typed load of a generic .tres can throw before the mismatched resource is released"
+            );
+            Assert(
+                warmup.Contains("resource.Dispose();", StringComparison.Ordinal),
+                "every loose non-material resource probe must be explicitly released"
+            );
+            Assert(
+                !warmup.Contains("CollectMaterialsAsync()", StringComparison.Ordinal)
+                    && !warmup.Contains(
+                        "new Dictionary<string, Material>()",
+                        StringComparison.Ordinal
+                    ),
+                "warmup must never retain the complete material graph before rendering"
             );
         }
     );
