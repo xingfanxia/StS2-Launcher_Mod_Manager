@@ -40,8 +40,7 @@ Commit boundary: recovery journal + deterministic decision tests。
 
 ## Phase 2 — Adaptive shader warmup
 
-Status: implementation and automated gate completed; cumulative signed-device gate is deferred to
-Phase 7 so the user's installed game/mod/login state is upgraded only once.
+Status: completed; the cumulative signed-device warmup/pressure gate passed in Phase 7.
 
 1. 为 warmup 增加可注入的 memory-pressure provider；优先使用 Android
    `onTrimMemory`/系统可用内存和进程 RSS 的最小可靠组合，不在测试中依赖真实 LMK。
@@ -61,8 +60,7 @@ Commit boundary: adaptive warmup + pressure bridge + focused tests。
 
 ## Phase 3 — Crash-loop Safe Mode and mod isolation
 
-Status: implementation and automated gate completed; cumulative signed-device crash/fault rows are
-deferred to Phase 7.
+Status: completed; the cumulative signed-device crash/fault rows passed in Phase 7.
 
 1. 在加载任何第三方 mod 前消费 recovery request，显示原因、上次失败阶段和可逆操作。
 2. Safe Mode 使用 session-only override：跳过可选 warmup、临时不加载第三方 mod；
@@ -85,8 +83,8 @@ Commit boundary: one-shot Safe Mode + mod candidate journal/tests。
 
 ## Phase 4 — Transactional game update and interruption recovery
 
-Status: implementation and automated gate completed; cumulative signed-device branch-switch and
-fault-injection rows are deferred to Phase 7.
+Status: completed; the cumulative signed-device branch-switch and fault-injection rows passed in
+Phase 7.
 
 1. 建模完整版本元组：branch、Steam manifest/build、PCK identity、game assembly set、
    atlas/cache stamp；确定唯一 active marker 的提交点。
@@ -107,8 +105,8 @@ Commit boundary: update transaction guards + fault-injection tests。
 
 ## Phase 5 — Renderer compatibility recovery
 
-Status: implementation, automated gate, and renderer capability check completed; cumulative signed
-recovery-prompt/device matrix is deferred to Phase 7.
+Status: completed; the renderer capability and cumulative signed recovery-prompt/device matrix
+passed in Phase 7.
 
 1. 首先验证当前 APK/Godot build 是否真的包含可启动的 compatibility renderer。
 2. renderer failure 判定只使用“首个可用帧之前的重复失败 + exit/stage 证据”；
@@ -127,8 +125,8 @@ Commit boundary: renderer decision/override only if capability gate passes。
 
 ## Phase 6 — Complete KR/EN localization coverage
 
-Status: implementation, automated gate, and reference-device core surface audit completed; fault-only
-recovery dialogs and the final rotation/soak matrix remain in Phase 7.
+Status: completed; the fault-only recovery dialogs and final rotation/soak localization matrix passed
+in Phase 7.
 
 1. 建立 launcher-authored 可见文字 inventory，覆盖 C#/Godot 和 Android Java/resource
    的 screen、dialog、native overlay、toast/alert、status、tooltip、placeholder、按钮、
@@ -160,7 +158,7 @@ Commit boundary: centralized English coverage + static/runtime localization test
 
 ## Phase 7 — Soak, regression and final proof
 
-Status: pending
+Status: completed
 
 1. 扩展 `tools/device-stability/`，记录净化后的 attempt、stage、PID continuity、
    `ApplicationExitInfo`、menu/recovery terminal state 和 elapsed time。

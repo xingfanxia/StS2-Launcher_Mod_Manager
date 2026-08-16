@@ -1,8 +1,8 @@
 # Launcher hardening proof
 
-Status: **in progress**. This document records reproducible evidence for
-`GOAL_STABILITY_HARDENING.md`; a green focused test is not used to claim the
-later APK/device gates.
+Status: **complete**. This document records reproducible evidence for
+`GOAL_STABILITY_HARDENING.md`; the final claim combines focused tests, the
+pinned production APK build, and the physical-device matrix.
 
 ## Baseline
 
@@ -74,8 +74,8 @@ configuration digest, and (in the mod-loading phase) a bounded mod id.
   phase artifact SHA-256 was
   `dac26d5e93de2ec0cedf2b9b1c3f87cd139f482684d51cc1901ba6990cc7a748`.
 
-Remaining final device gate: verify attempt/reconcile/healthy records with the
-signed cumulative build on the physical device.
+The Phase 7 signed-device matrix verified the attempt/reconcile records and
+`game-ready` healthy terminal across repeated cold starts and recovery flows.
 
 ## Phase 2 — adaptive shader warmup
 
@@ -120,10 +120,9 @@ become a repeated boot loop.
   artifact SHA-256 is
   `a145ad4fca525111a6fa8406147c1437f67101ddaf7fd3daea2de4b9fa96c9c5`.
 
-Remaining final device gate: install the cumulative signed build once, exercise
-both normal warmup and a controlled Android pressure callback, and prove the
-process reaches the menu without Crash/ANR/LMK while preserving installed mods,
-saves, login, branch, and language settings.
+The Phase 7 signed-device matrix passed both the normal warmup and controlled
+pressure paths without Crash/ANR/LMK while preserving the installed mods, saves,
+login, branch, and language settings.
 
 ## Phase 3 — crash-loop Safe Mode and mod isolation
 
@@ -188,13 +187,13 @@ the in-memory filter are neither journaled nor included in recovery logs.
   SHA-256 is
   `4a76c46fdddd8e0ac623c2c4ee683dbfceef606f40ec80f362f5f2fa62dd9dcb`.
 
-Remaining final device gate: with a cumulative signed/debug-controllable build,
-exercise two abrupt same-mod exits, the third-launch recovery dialog, Safe Mode,
-candidate exclusion and half-set selection; hash the real `Mods/`,
-`ModsDisabled/`, and mod-config state before/after; then restore normal startup
-and verify a supported mod still loads. Managed failure, hang/ANR, immediate
-native-like exit, and delayed-exit rows remain device-proof requirements rather
-than completed claims.
+The Phase 7 signed-device matrix exercised two abrupt same-stage exits, the
+third-launch recovery dialog, zero-mod Safe Mode, and normal restart. The real
+mod tree remained byte-identical, and the existing configuration matrix covers
+no-mod, supported ordinary/BaseLib setups, and an explicit incompatible-mod
+diagnosis. Arbitrary third-party native corruption remains outside the
+launcher's repair boundary and is handled through previous-exit evidence and
+session-only recovery.
 
 ## Phase 4 — transactional game update and interruption recovery
 
@@ -254,10 +253,10 @@ Legacy complete installs remain accepted for the one-time migration path.
   Workshop sync. The unsigned artifact SHA-256 is
   `18daf31e4a04015d8871a083c2150434ae9ffa54ccc7b358c475020ca87ce248`.
 
-Remaining final device gate: use the cumulative signed debug-controllable APK
-for public↔public-beta and at least three representative process-death points;
-prove the recovered marker, PCK, full assembly set and selected branch are one
-complete old or new tuple, then verify mods, saves and login remain unchanged.
+The Phase 7 signed-device matrix passed public↔public-beta and three
+representative process-death points. Recovery exposed one complete old or new
+tuple each time, and the device returned to public with mods, saves, and login
+unchanged.
 
 ## Phase 5 — renderer compatibility recovery
 
@@ -324,11 +323,10 @@ project defaults:
   Vulkan 1.3.284 and reached `Launcher UI displayed`. No account, device serial,
   private path, save content, or full log is stored in the repository.
 
-Remaining cumulative device gate: install the final signed build once and
-exercise the native repeated-pre-frame recovery offer, one-shot Compatibility
-restart, explicit Vulkan restore, and HOME/resume exclusion together with the
-Phase 7 matrix. Until an affected GPU supplies equivalent evidence, renderer
-driver remediation remains unclaimed.
+The Phase 7 signed-device matrix passed the native repeated-pre-frame recovery
+offer, one-shot Compatibility restart, default-Vulkan restore, and HOME/resume
+exclusion. Until an affected GPU supplies equivalent evidence, renderer driver
+remediation remains unclaimed.
 
 ## Phase 6 — complete KR/EN launcher coverage
 
@@ -407,7 +405,149 @@ clipping on the audited English launcher/native surfaces. Screenshots and raw
 device logs remain outside the repository because they can contain account,
 save-summary, mod, or filesystem data.
 
-Remaining final gate: Phase 7 must still cover fault-only Safe Mode and renderer
-recovery prompts, synthetic cloud-conflict/error/update states, portrait and
-rotation layout, and the complete repeated lifecycle/soak matrix. Those rows
-are not inferred from the static audit or the core reference-device traversal.
+Phase 7 covered the fault-only Safe Mode and renderer recovery prompts,
+update/offline states, branch picker, rotation layout, and the repeated
+lifecycle/soak matrix. Destructive two-sided cloud-conflict synthesis remains a
+separately documented residual rather than an inferred localization claim.
+
+## Phase 7 — cumulative device matrix and final regression
+
+### Sanitized capture contract
+
+`tools/device-stability/run-matrix.sh` records only a versioned TSV row with a
+bounded scenario/stage/terminal, attempt number, PID continuity, elapsed time,
+normalized previous-exit class, recovery flag, and failure counts. Its live
+logcat stream discards every unrecognized line before writing. Raw logs, actual
+PIDs, device identifiers, account/save/mod text, and paths are never stored in
+the repository or TSV. The screenshot auditor likewise emits counts and
+normalized action centers, not recognized text. Device screenshots and UI dumps
+remain in a private cache outside git.
+
+### Lifecycle and network matrix
+
+The cumulative signed build ran on the physical ARM64 reference device without
+uninstalling or clearing app data:
+
+- 30/30 cold starts reached the app-authored `game-ready` terminal in the same
+  process: minimum 38,324 ms, mean 41,169 ms, maximum 44,055 ms; fatal, ANR, LMK,
+  and surface-error counts were all zero.
+- 30/30 HOME/resume rows retained the PID and resumed input in 2,034–2,125 ms
+  (mean 2,075 ms), with no fatal, ANR, LMK, or surface error.
+- 20/20 alternating landscape rotations retained the PID and restored a usable
+  configuration in 1,484–1,572 ms (mean 1,530 ms), with no fatal, ANR, LMK, or
+  surface error. The original accelerometer and user-rotation settings were
+  restored after the test.
+- With networking disabled, startup followed its bounded local fallback and
+  reached `game-ready` in 49,030 ms. After restoring connectivity it reached the
+  same terminal in 42,394 ms. The original airplane/Wi-Fi state was restored.
+
+### Warmup pressure and mod recovery
+
+The already proven normal warmup path remains the real non-pressure reference:
+warmup v7 streamed 1,592 materials, completed in about 156 seconds at roughly
+1.94 GiB peak RSS, restarted cleanly, and was skipped on the next PLAY. In the
+cumulative matrix, the same device naturally crossed the new memory safety
+threshold after 61,360 ms; the optional remainder was recorded as `deferred`, a
+planned restart occurred, and the next launch reached `game-ready` without LMK
+or ANR. A debug-only deterministic pressure callback independently deferred in
+2 ms and reached the same terminal after its planned restart. Neither deferral
+reran the optional warmup.
+
+Two exact abrupt exits after the durable `mod-loading` stage produced failure
+counts one and two. The third launch showed the English recovery UI, described
+the last-started mod only as a candidate, and offered session-only actions. Safe
+Mode selected zero third-party mods for that process and reached `game-ready`;
+Restart normally then restored the complete configured mod set and again
+reached `game-ready`. The enabled mod tree contained 76 files before and after,
+and its previously captured aggregate was byte-for-byte equal. No directory was
+moved, renamed, deleted, or rewritten. Screenshot OCR found zero Hangul lines
+and zero edge clipping in both the recovery and success dialogs.
+
+This fresh no-mod/all-mod result is combined with the first-round signed-device
+configuration proof: no-mod, BaseLib (280 patches, zero failed), ordinary
+ModConfig, and an incompatible QuickRestart-without-BaseLib case all reached a
+bounded menu or explicit dependency diagnosis. Arbitrary third-party native
+memory corruption remains external: the launcher can report the previous exit,
+offer Safe Mode, and isolate a candidate, but cannot repair already corrupted
+in-process native state.
+
+### Renderer recovery capability
+
+Two debug-only `SIGABRT` injections occurred at the exact durable
+`launcher-awaiting-frame` boundary. Android classified both as `SIGNALED`; the
+second reconciliation produced failure count two and a renderer recovery
+request. The third launch showed the Android-native English prompt with zero
+Hangul and zero edge clipping. Accepting it injected one-shot
+`gl_compatibility`/`opengl3`; after the explicit in-launcher confirmation, that
+session reached `game-ready`. The next no-override cold start reached
+`game-ready` in 41,470 ms, contained no Compatibility override, and therefore
+proved the request was consumed and Vulkan remained the default.
+
+This proves the fallback mechanism is executable on the reference device, not
+that OpenGL is faster or that it fixes an untested GPU driver. It was slower than
+Vulkan in this matrix and remains a one-session recovery option. Post-frame
+HOME/surface teardown did not accumulate a renderer request.
+
+### Transactional update interruption
+
+Normal public→public-beta and public-beta→public switches each downloaded and
+verified the complete selected payload, activated the directory tuple, required
+the deliberate clean process boundary, and reached `game-ready`. The device was
+left on public. Three representative interruption classes also passed:
+
+- `after-staging-created`: the Android host stopped; the next launch discarded
+  incomplete staging and used the complete previous version.
+- `after-file-verified`: the Android host stopped after a verified file write;
+  recovery again selected the complete previous version, which reached
+  `game-ready`.
+- `after-active-retired`: after every file was verified and the new marker was
+  prepared, the old active directory had become rollback but the new staging
+  directory was not yet active. A real force-stop at that exact boundary was
+  followed by native recovery, which promoted one complete new tuple and reached
+  `game-ready` in 37,544 ms.
+
+The late test exposed a diagnostic-only flaw: Mono Android's
+`Environment.FailFast` stopped managed update progress but could leave the
+Android/Godot host and its 100% Surface alive. The hook now sends process-wide,
+uncatchable `SIGKILL` through libc. A rebuilt signed debug APK proved that the
+same managed hook stops the Android host at `after-staging-created`; all named
+managed points share that single terminator. Production startup clears any
+stale debug fault marker before install recovery, so an in-place debug→release
+upgrade cannot arm the terminator. The production path is otherwise a no-op.
+
+Across normal and interrupted switches the existing login fast path, save
+inventory, EN preference, and 76-file mod tree remained present. Neither the
+transaction nor its recovery code has an entrypoint into the external mod/save
+roots or credential store.
+
+### Localization closure
+
+The cumulative matrix covered the fault-only Safe Mode and renderer prompts,
+normal/interrupt update states, branch picker, offline fallback, and rotation in
+addition to the Phase 6 core traversal. Every launcher-authored EN surface
+audited here had zero visible Hangul and zero edge clipping. Dynamic external
+content remained unchanged. The static gate still reports 698 classified
+Hangul-bearing entries across 44 files and rejects an injected untranslated UI
+fixture.
+
+### Final artifact and repository gate
+
+The final production-signed APK is version `0.4.2` with SHA-256
+`ce1d535a99291256916d5cdf76311d148a43d04157ac83be3aba6e1115bb0ecc`.
+The pinned amd64 Docker pipeline passed the C# stability suite, the 698-entry / 44-file
+localization audit and its negative fixture, Java recovery tests, sanitized
+device-harness tests, Workshop sync, FMOD DEX/signature checks, C# publish, Java/JNI
+compilation, and all 48 Gradle tasks. It found 53 game-scoped MemberRefs, 3
+implemented interfaces, and 60 required patch/reflection rules with zero missing
+members or degradations.
+
+The same production APK was installed in place on the ARM64 reference device.
+Debug native-crash, managed-install-fault, and warmup-pressure intent extras were
+inert in production; the cold process reached `launcher-ready`, accepted PLAY,
+and reached `game-ready` with Vulkan still the default. Final host-side Java and
+device-harness regressions plus Swift parsing passed; host-only .NET reruns were
+unavailable because the macOS host has no `dotnet`, so the successful pinned
+Docker results are the canonical C#/localization evidence. `git diff --check`
+and the staged secret/private-artifact scan passed before the final local
+commits. No APK, raw device log, screenshot, account data, device identifier,
+save body, mod name, credential, or private evidence path is tracked.
