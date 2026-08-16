@@ -177,6 +177,9 @@ public static class LauncherPatches
     {
         var gameNode = (Node)game;
 
+        StartupRecoveryBridge.InitializeAttemptContext();
+        StartupRecoveryBridge.RecordStage("launcher-creating");
+
         var launcher = new LauncherUI();
         gameNode.AddChild(launcher);
         launcher.SetGameMode(true);
@@ -184,12 +187,14 @@ public static class LauncherPatches
         if (launcher.Initialize())
         {
             PatchHelper.Log("Launcher UI displayed");
+            StartupRecoveryBridge.RecordStage("launcher-ready");
             // The native atlas-rebuild overlay swallows touches, so release it
             // before waiting for the user's PLAY input.
             LauncherModel.GetGodotApp()?.Call("hideLoadingOverlay");
             if (await launcher.WaitForLaunch())
             {
                 userLaunched = true;
+                StartupRecoveryBridge.RecordStage("play-requested");
                 PatchHelper.Log("User launched game, proceeding to startup...");
             }
             else
@@ -199,6 +204,7 @@ public static class LauncherPatches
         }
         else
         {
+            StartupRecoveryBridge.RecordStage("launcher-bypass");
             LauncherModel.GetGodotApp()?.Call("hideLoadingOverlay");
             // The launcher is optional once valid game files are already loaded.
             // A half-initialized UI cannot produce PLAY, so fail open to the game
@@ -246,6 +252,7 @@ public static class LauncherPatches
             CloudSyncEnabled && SavedAccountName != null && SavedRefreshToken != null;
         if (cloudSyncWillRun)
         {
+            StartupRecoveryBridge.RecordStage("cloud-sync");
             overlay = new CloudSyncOverlay();
             gameNode.AddChild(overlay);
             overlay.Initialize();
@@ -300,6 +307,7 @@ public static class LauncherPatches
 
         if (ShaderWarmupScreen.NeedsWarmup())
         {
+            StartupRecoveryBridge.RecordStage("shader-warmup");
             var warmup = new ShaderWarmupScreen();
             gameNode.AddChild(warmup);
             var completion = warmup.WaitForCompletion();
@@ -331,6 +339,7 @@ public static class LauncherPatches
             }
         }
 
+        StartupRecoveryBridge.RecordStage("game-startup");
         SaveManager.Instance.InitSettingsData();
 
         var gameStartup = game.GetType()
@@ -339,6 +348,7 @@ public static class LauncherPatches
         try
         {
             await (Task)gameStartup.Invoke(game, null);
+            StartupRecoveryBridge.MarkHealthy("game-ready");
         }
         catch (TargetInvocationException ex)
         {

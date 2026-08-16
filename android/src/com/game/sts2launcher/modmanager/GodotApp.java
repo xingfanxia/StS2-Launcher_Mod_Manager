@@ -41,6 +41,7 @@ import java.io.OutputStream;
 import java.security.KeyStore;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
@@ -76,6 +77,11 @@ public class GodotApp extends GodotActivity {
 	private static final int REQ_SAF_ZIP = 4201;
 	private static final String LAST_REPORTED_EXIT_PREF = "last_reported_exit_timestamp";
 	private static final String PLANNED_EXIT_PREF = "planned_exit_requested_at";
+	private static final String STARTUP_RECOVERY_PREF = "startup_recovery_journal_v1";
+	private static final Object STARTUP_RECOVERY_LOCK = new Object();
+	private static StartupRecoveryJournal.State startupRecoveryState;
+	private static long startupAttemptId;
+	private static volatile boolean previousExitReportReady;
 
 	private volatile boolean pickerActive = false;
 	private final List<File> stagedAtlasCacheDirs = new ArrayList<>();
@@ -106,6 +112,7 @@ public class GodotApp extends GodotActivity {
 		instance = this;
 		gameDir = new File(getFilesDir(), "game").getAbsolutePath();
 		configureAppPrivateEnvironment();
+		beginStartupAttempt();
 
 		// Start logcat capture as early as possible if the user previously enabled
 		// debug logging — the goal is to capture from the very first init logs
@@ -907,9 +914,17 @@ public class GodotApp extends GodotActivity {
 	}
 
 	private void recordPlannedExit() {
+		long now = System.currentTimeMillis();
+		synchronized (STARTUP_RECOVERY_LOCK) {
+			if (startupAttemptId != 0L) {
+				startupRecoveryState = StartupRecoveryJournal.markPlannedExit(
+						loadStartupRecoveryStateLocked(), startupAttemptId, now);
+				persistStartupRecoveryStateLocked();
+			}
+		}
 		getSharedPreferences("sts2mobile", MODE_PRIVATE)
 				.edit()
-				.putLong(PLANNED_EXIT_PREF, System.currentTimeMillis())
+				.putLong(PLANNED_EXIT_PREF, now)
 				.commit();
 	}
 
@@ -925,6 +940,7 @@ public class GodotApp extends GodotActivity {
 	private void reportPreviousProcessExits() {
 		if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
 			Log.i(TAG, "[PreviousExit] unavailable below Android 11");
+			previousExitReportReady = true;
 			return;
 		}
 
@@ -943,6 +959,7 @@ public class GodotApp extends GodotActivity {
 
 			List<ApplicationExitInfo> exits = manager.getHistoricalProcessExitReasons(
 					getPackageName(), 0, 5);
+			exits.sort(Comparator.comparingLong(ApplicationExitInfo::getTimestamp));
 			for (ApplicationExitInfo info : exits) {
 				long timestamp = info.getTimestamp();
 				if (timestamp <= lastReported) continue;
@@ -965,6 +982,7 @@ public class GodotApp extends GodotActivity {
 				if (info.getReason() == ApplicationExitInfo.REASON_ANR) {
 					logPreviousAnrTrace(info);
 				}
+				reconcileStartupExit(info.getReason(), timestamp);
 			}
 
 			SharedPreferences.Editor editor = prefs.edit();
@@ -978,6 +996,140 @@ public class GodotApp extends GodotActivity {
 			editor.apply();
 		} catch (Exception ex) {
 			Log.w(TAG, "[PreviousExit] query failed", ex);
+		} finally {
+			previousExitReportReady = true;
+		}
+	}
+
+	private void beginStartupAttempt() {
+		synchronized (STARTUP_RECOVERY_LOCK) {
+			// Activity recreation stays in the same process and must not look like a
+			// second process attempt. Static state resets only after real process death.
+			if (startupAttemptId != 0L) return;
+			StartupRecoveryJournal.BeginResult begin = StartupRecoveryJournal.beginAttempt(
+					loadStartupRecoveryStateLocked(), System.currentTimeMillis());
+			startupRecoveryState = begin.state;
+			startupAttemptId = begin.attemptId;
+			previousExitReportReady = Build.VERSION.SDK_INT < Build.VERSION_CODES.R;
+			persistStartupRecoveryStateLocked();
+			Log.i(TAG, "[StartupRecovery] attempt=" + startupAttemptId
+					+ " stage=android-on-create");
+		}
+	}
+
+	private StartupRecoveryJournal.State loadStartupRecoveryStateLocked() {
+		if (startupRecoveryState != null) return startupRecoveryState;
+		String encoded = getSharedPreferences("sts2mobile", MODE_PRIVATE)
+				.getString(STARTUP_RECOVERY_PREF, "");
+		StartupRecoveryJournal.DecodeResult decoded = StartupRecoveryJournal.decode(encoded);
+		if (!decoded.valid) {
+			Log.w(TAG, "[StartupRecovery] invalid/torn journal discarded");
+		}
+		startupRecoveryState = decoded.state;
+		return startupRecoveryState;
+	}
+
+	private void persistStartupRecoveryStateLocked() {
+		if (startupRecoveryState == null) return;
+		boolean committed = getSharedPreferences("sts2mobile", MODE_PRIVATE)
+				.edit()
+				.putString(STARTUP_RECOVERY_PREF,
+						StartupRecoveryJournal.encode(startupRecoveryState))
+				.commit();
+		if (!committed) {
+			Log.w(TAG, "[StartupRecovery] journal commit failed");
+		}
+	}
+
+	private void reconcileStartupExit(int reason, long timestampMs) {
+		synchronized (STARTUP_RECOVERY_LOCK) {
+			StartupRecoveryJournal.State before = loadStartupRecoveryStateLocked();
+			StartupRecoveryJournal.State after = StartupRecoveryJournal.reconcileExit(
+					before, reason, timestampMs, System.currentTimeMillis());
+			if (after == before) return;
+			startupRecoveryState = after;
+			persistStartupRecoveryStateLocked();
+			StartupRecoveryJournal.RecoveryRequest request =
+					StartupRecoveryJournal.getRecoveryRequest(after);
+			Log.i(TAG, "[StartupRecovery] reconciled reason="
+					+ PreviousExitClassifier.reasonLabel(reason)
+					+ " failureCount=" + request.failureCount
+					+ " recoveryPending=" + request.pending
+					+ " stage=" + request.stage);
+		}
+	}
+
+	// C# bridge: only bounded, app-authored stage/fingerprint/mod-id values enter
+	// the private journal. StartupRecoveryJournal rejects paths and control chars.
+	public void recordStartupStage(String stage) {
+		synchronized (STARTUP_RECOVERY_LOCK) {
+			if (startupAttemptId == 0L) return;
+			startupRecoveryState = StartupRecoveryJournal.recordStage(
+					loadStartupRecoveryStateLocked(), startupAttemptId, stage);
+			persistStartupRecoveryStateLocked();
+		}
+	}
+
+	public void setStartupFingerprint(String fingerprint) {
+		synchronized (STARTUP_RECOVERY_LOCK) {
+			if (startupAttemptId == 0L) return;
+			startupRecoveryState = StartupRecoveryJournal.setFingerprint(
+					loadStartupRecoveryStateLocked(), startupAttemptId, fingerprint);
+			persistStartupRecoveryStateLocked();
+		}
+	}
+
+	public void recordModCandidate(String modId) {
+		synchronized (STARTUP_RECOVERY_LOCK) {
+			if (startupAttemptId == 0L) return;
+			startupRecoveryState = StartupRecoveryJournal.recordModCandidate(
+					loadStartupRecoveryStateLocked(), startupAttemptId, modId);
+			persistStartupRecoveryStateLocked();
+		}
+	}
+
+	public void recordModSuccessful(String modId) {
+		synchronized (STARTUP_RECOVERY_LOCK) {
+			if (startupAttemptId == 0L) return;
+			startupRecoveryState = StartupRecoveryJournal.recordModSuccessful(
+					loadStartupRecoveryStateLocked(), startupAttemptId, modId);
+			persistStartupRecoveryStateLocked();
+		}
+	}
+
+	public void markStartupHealthy(String terminalStage) {
+		synchronized (STARTUP_RECOVERY_LOCK) {
+			if (startupAttemptId == 0L) return;
+			startupRecoveryState = StartupRecoveryJournal.markHealthy(
+					loadStartupRecoveryStateLocked(), startupAttemptId, terminalStage);
+			persistStartupRecoveryStateLocked();
+			Log.i(TAG, "[StartupRecovery] healthy stage=" + terminalStage);
+		}
+	}
+
+	public boolean isPreviousExitReportReady() {
+		return previousExitReportReady;
+	}
+
+	// Newline-delimited fields are safe because candidate validation rejects all
+	// control characters. The payload contains no account, path, device, or save data.
+	public String getStartupRecoveryRequest() {
+		synchronized (STARTUP_RECOVERY_LOCK) {
+			StartupRecoveryJournal.RecoveryRequest request =
+					StartupRecoveryJournal.getRecoveryRequest(loadStartupRecoveryStateLocked());
+			return (request.pending ? "1" : "0") + "\n"
+					+ request.failureCount + "\n"
+					+ request.stage + "\n"
+					+ request.modCandidate + "\n"
+					+ request.reason;
+		}
+	}
+
+	public void clearStartupRecoveryRequest() {
+		synchronized (STARTUP_RECOVERY_LOCK) {
+			startupRecoveryState = StartupRecoveryJournal.clearRecoveryRequest(
+					loadStartupRecoveryStateLocked());
+			persistStartupRecoveryStateLocked();
 		}
 	}
 

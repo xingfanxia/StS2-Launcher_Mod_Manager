@@ -5,7 +5,7 @@
 
 ## Phase 0 — Baseline and fault vocabulary
 
-Status: pending
+Status: completed
 
 1. 从 `docs/STABILITY_PROOF.md` 的已验证 APK/commit 建立 baseline。
 2. 列出已有启动阶段、planned restart、previous-exit、warmup marker、mod loader、
@@ -21,7 +21,7 @@ Gate:
 
 ## Phase 1 — Durable attempt journal and recovery decision
 
-Status: pending
+Status: completed
 
 1. 先写纯状态机测试，覆盖正常启动、计划重启、单次异常、相同阶段连续异常、不同
    阶段异常、配置变化、过期 attempt、并发/撕裂写入和 Android 7–10 降级。
@@ -40,7 +40,7 @@ Commit boundary: recovery journal + deterministic decision tests。
 
 ## Phase 2 — Adaptive shader warmup
 
-Status: pending
+Status: in progress
 
 1. 为 warmup 增加可注入的 memory-pressure provider；优先使用 Android
    `onTrimMemory`/系统可用内存和进程 RSS 的最小可靠组合，不在测试中依赖真实 LMK。

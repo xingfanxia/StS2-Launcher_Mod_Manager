@@ -4,6 +4,15 @@ package com.game.sts2launcher.modmanager;
 // be regression-tested without an Android runtime.
 final class PreviousExitClassifier {
 	static final int REASON_EXIT_SELF = 1;
+	static final int REASON_SIGNALED = 2;
+	static final int REASON_LOW_MEMORY = 3;
+	static final int REASON_CRASH = 4;
+	static final int REASON_CRASH_NATIVE = 5;
+	static final int REASON_ANR = 6;
+	static final int REASON_INITIALIZATION_FAILURE = 7;
+	static final int REASON_EXCESSIVE_RESOURCE_USAGE = 9;
+	static final int REASON_USER_REQUESTED = 10;
+	static final int REASON_USER_STOPPED = 11;
 	private static final long PLANNED_EXIT_WINDOW_MS = 120_000L;
 	private static final long CLOCK_SKEW_TOLERANCE_MS = 5_000L;
 
@@ -14,6 +23,21 @@ final class PreviousExitClassifier {
 				&& plannedAtMs > 0L
 				&& exitTimestampMs >= plannedAtMs - CLOCK_SKEW_TOLERANCE_MS
 				&& exitTimestampMs <= plannedAtMs + PLANNED_EXIT_WINDOW_MS;
+	}
+
+	static boolean isActionableFailure(int reason) {
+		switch (reason) {
+			case REASON_SIGNALED:
+			case REASON_LOW_MEMORY:
+			case REASON_CRASH:
+			case REASON_CRASH_NATIVE:
+			case REASON_ANR:
+			case REASON_INITIALIZATION_FAILURE:
+			case REASON_EXCESSIVE_RESOURCE_USAGE:
+				return true;
+			default:
+				return false;
+		}
 	}
 
 	static String reasonLabel(int reason) {

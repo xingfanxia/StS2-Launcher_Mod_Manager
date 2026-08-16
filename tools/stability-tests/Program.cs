@@ -597,6 +597,87 @@ try
         }
     );
 
+    Run(
+        "startup recovery journal spans Android and launcher stages without private data",
+        () =>
+        {
+            var repository = FindRepositoryRoot();
+            var java = File.ReadAllText(
+                Path.Combine(
+                    repository,
+                    "android",
+                    "src",
+                    "com",
+                    "game",
+                    "sts2launcher",
+                    "modmanager",
+                    "GodotApp.java"
+                )
+            );
+            var bridge = File.ReadAllText(
+                Path.Combine(
+                    repository,
+                    "src",
+                    "STS2Mobile",
+                    "Launcher",
+                    "StartupRecoveryBridge.cs"
+                )
+            );
+            var patches = File.ReadAllText(
+                Path.Combine(repository, "src", "STS2Mobile", "Patches", "LauncherPatches.cs")
+            );
+
+            Assert(
+                java.Contains("STARTUP_RECOVERY_PREF", StringComparison.Ordinal)
+                    && java.Contains(".commit();", StringComparison.Ordinal)
+                    && java.Contains("reconcileStartupExit", StringComparison.Ordinal),
+                "Android must durably reconcile process exits with startup attempts"
+            );
+            Assert(
+                bridge.Contains("SHA256.HashData", StringComparison.Ordinal)
+                    && !bridge.Contains("SavedAccountName", StringComparison.Ordinal)
+                    && !bridge.Contains("SavedRefreshToken", StringComparison.Ordinal),
+                "the persisted configuration identity must be opaque and credential-free"
+            );
+            foreach (
+                var stage in new[]
+                {
+                    "launcher-ready",
+                    "play-requested",
+                    "cloud-sync",
+                    "shader-warmup",
+                    "game-startup",
+                    "game-ready",
+                }
+            )
+            {
+                Assert(
+                    patches.Contains($"\"{stage}\"", StringComparison.Ordinal),
+                    $"launcher startup must journal {stage}"
+                );
+            }
+            Assert(
+                patches.IndexOf(
+                    "StartupRecoveryBridge.RecordStage(\"game-startup\")",
+                    StringComparison.Ordinal
+                )
+                    < patches.IndexOf(
+                        "await (Task)gameStartup.Invoke(game, null);",
+                        StringComparison.Ordinal
+                    )
+                    && patches.IndexOf(
+                        "StartupRecoveryBridge.MarkHealthy(\"game-ready\")",
+                        StringComparison.Ordinal
+                    )
+                        > patches.IndexOf(
+                            "await (Task)gameStartup.Invoke(game, null);",
+                            StringComparison.Ordinal
+                        ),
+                "game startup may be marked healthy only after the awaited startup succeeds"
+            );
+        }
+    );
+
     Console.WriteLine("All stability tests passed.");
     return 0;
 }

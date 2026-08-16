@@ -10,6 +10,14 @@ public final class PreviousExitClassifierTest {
 				"LOW_MEMORY".equals(PreviousExitClassifier.reasonLabel(3)));
 		check("ANR is actionable",
 				"ANR".equals(PreviousExitClassifier.reasonLabel(6)));
+		check("native crash participates in crash-loop recovery",
+				PreviousExitClassifier.isActionableFailure(
+						PreviousExitClassifier.REASON_CRASH_NATIVE));
+		check("ANR participates in crash-loop recovery",
+				PreviousExitClassifier.isActionableFailure(PreviousExitClassifier.REASON_ANR));
+		check("user stop never participates in crash-loop recovery",
+				!PreviousExitClassifier.isActionableFailure(
+						PreviousExitClassifier.REASON_USER_STOPPED));
 		check("planned self-exit is recognized",
 				PreviousExitClassifier.isPlannedExit(1, 10_050L, 10_000L));
 		check("stale planned marker does not mask a crash",

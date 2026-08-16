@@ -90,7 +90,9 @@ public static class ModEntry
             {
                 var assemblyDir = Path.GetDirectoryName(typeof(ModEntry).Assembly.Location);
                 if (string.IsNullOrWhiteSpace(assemblyDir))
-                    throw new InvalidOperationException("STS2Mobile assembly directory is unavailable");
+                    throw new InvalidOperationException(
+                        "STS2Mobile assembly directory is unavailable"
+                    );
                 configDir = Path.Combine(assemblyDir, ".config");
                 System.Environment.SetEnvironmentVariable("XDG_CONFIG_HOME", configDir);
             }
@@ -233,6 +235,8 @@ public static class ModEntry
             return;
         }
 
+        StartupRecoveryBridge.InitializeAttemptContext();
+        StartupRecoveryBridge.RecordStage("standalone-launcher");
         var launcher = new LauncherUI();
         tree.Root.AddChild(launcher);
         if (!launcher.Initialize())
@@ -254,5 +258,6 @@ public static class ModEntry
             return;
         }
         PatchHelper.Log("Standalone launcher displayed");
+        StartupRecoveryBridge.MarkHealthy("standalone-ready");
     }
 }
