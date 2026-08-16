@@ -78,6 +78,26 @@ public static class ModEntry
             Console.Error.WriteLine($"[STS2Mobile] [Diag] TMPDIR override failed: {ex.Message}");
         }
 
+        // Android exposes HOME as /data on some ROMs. .NET's Unix
+        // SpecialFolder.ApplicationData fallback therefore becomes
+        // /data/.config, which an untrusted app cannot create. Device logs show
+        // both DamageMeter and Rewind failing there. XDG_CONFIG_HOME is the
+        // runtime's documented Unix override; point it at app-private storage
+        // before any third-party mod assembly can resolve ApplicationData.
+        try
+        {
+            var configDir = Path.Combine(OS.GetUserDataDir(), ".config");
+            Directory.CreateDirectory(configDir);
+            System.Environment.SetEnvironmentVariable("XDG_CONFIG_HOME", configDir);
+            Console.Error.WriteLine($"[STS2Mobile] [Diag] XDG_CONFIG_HOME -> {configDir}");
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine(
+                $"[STS2Mobile] [Diag] XDG_CONFIG_HOME override failed: {ex.Message}"
+            );
+        }
+
         PatchHelper.Log("Initializing STS2Mobile...");
 
         _harmony = new Harmony("com.sts2mobile");

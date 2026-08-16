@@ -104,6 +104,48 @@ try
     );
 
     Run(
+        "Android mod configuration resolves to app-private XDG storage",
+        () =>
+        {
+            var repository = FindRepositoryRoot();
+            var modEntry = File.ReadAllText(
+                Path.Combine(repository, "src", "STS2Mobile", "ModEntry.cs")
+            );
+            Assert(
+                modEntry.Contains(
+                    "Path.Combine(OS.GetUserDataDir(), \".config\")",
+                    StringComparison.Ordinal
+                )
+                    && modEntry.Contains(
+                        "SetEnvironmentVariable(\"XDG_CONFIG_HOME\", configDir)",
+                        StringComparison.Ordinal
+                    ),
+                "mods must not inherit Android's unwritable /data/.config fallback"
+            );
+
+            if (OperatingSystem.IsLinux())
+            {
+                var previous = Environment.GetEnvironmentVariable("XDG_CONFIG_HOME");
+                var expected = Path.Combine(root, "xdg-config");
+                try
+                {
+                    Directory.CreateDirectory(expected);
+                    Environment.SetEnvironmentVariable("XDG_CONFIG_HOME", expected);
+                    Assert(
+                        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData)
+                            == expected,
+                        ".NET Unix ApplicationData must honor XDG_CONFIG_HOME"
+                    );
+                }
+                finally
+                {
+                    Environment.SetEnvironmentVariable("XDG_CONFIG_HOME", previous);
+                }
+            }
+        }
+    );
+
+    Run(
         "dialog teardown fallback is one-shot",
         () =>
         {
