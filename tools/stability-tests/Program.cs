@@ -29,6 +29,7 @@ try
             var result = new ShaderWarmupState(root, version: 7).Check();
             Assert(!result.NeedsWarmup, result.Reason);
             Assert(!result.RecoveredInterruptedAttempt, "normal completion is not recovery");
+            Assert(result.Outcome == ShaderWarmupOutcome.Completed, "completed outcome");
             Assert(!File.Exists(state.AttemptMarkerPath), "attempt marker must be removed");
         }
     );
@@ -45,11 +46,38 @@ try
             var result = nextProcess.Check();
             Assert(!result.NeedsWarmup, result.Reason);
             Assert(result.RecoveredInterruptedAttempt, "interrupted attempt must be recovered");
+            Assert(result.Outcome == ShaderWarmupOutcome.Interrupted, "interrupted outcome");
             Assert(
                 File.ReadAllText(nextProcess.CompletedMarkerPath).Trim() == "7",
                 "recovery marker"
             );
             Assert(!File.Exists(nextProcess.AttemptMarkerPath), "recovered attempt marker removed");
+        }
+    );
+
+    Run(
+        "shader warmup persists every bypass outcome without retrying",
+        () =>
+        {
+            foreach (
+                var outcome in new[]
+                {
+                    ShaderWarmupOutcome.DeferredMemoryPressure,
+                    ShaderWarmupOutcome.FailedButBypassed,
+                }
+            )
+            {
+                Reset(root);
+                var state = new ShaderWarmupState(root, version: 7);
+                state.Begin();
+                state.Complete(outcome, "bounded diagnostic reason");
+
+                var result = new ShaderWarmupState(root, version: 7).Check();
+                Assert(!result.NeedsWarmup, $"{outcome} must not repeat");
+                Assert(result.Outcome == outcome, $"{outcome} must round-trip");
+                Assert(result.Reason == "bounded diagnostic reason", "diagnostic reason");
+                Assert(!File.Exists(state.AttemptMarkerPath), "attempt marker must be removed");
+            }
         }
     );
 
@@ -129,6 +157,100 @@ try
                         StringComparison.Ordinal
                     ),
                 "warmup must never retain the complete material graph before rendering"
+            );
+        }
+    );
+
+    Run(
+        "shader warmup defers before Android memory pressure becomes LMK",
+        () =>
+        {
+            const long mib = 1024L * 1024L;
+            var healthy = ShaderWarmupMemoryPolicy.Evaluate(
+                new ShaderWarmupMemorySnapshot(
+                    trimLevel: 0,
+                    systemLowMemory: false,
+                    availableBytes: 3_000 * mib,
+                    lowMemoryThresholdBytes: 512 * mib,
+                    totalBytes: 12_000 * mib,
+                    processPssBytes: 1_900 * mib
+                )
+            );
+            Assert(!healthy.ShouldDefer, healthy.Reason);
+
+            var trimPressure = ShaderWarmupMemoryPolicy.Evaluate(
+                new ShaderWarmupMemorySnapshot(
+                    10,
+                    false,
+                    3_000 * mib,
+                    512 * mib,
+                    12_000 * mib,
+                    900 * mib
+                )
+            );
+            Assert(trimPressure.ShouldDefer, "TRIM_MEMORY_RUNNING_LOW must stop optional warmup");
+
+            var systemLow = ShaderWarmupMemoryPolicy.Evaluate(
+                new ShaderWarmupMemorySnapshot(
+                    0,
+                    true,
+                    900 * mib,
+                    512 * mib,
+                    6_000 * mib,
+                    900 * mib
+                )
+            );
+            Assert(systemLow.ShouldDefer, "ActivityManager low-memory state must stop warmup");
+
+            var lowHeadroom = ShaderWarmupMemoryPolicy.Evaluate(
+                new ShaderWarmupMemorySnapshot(
+                    0,
+                    false,
+                    900 * mib,
+                    512 * mib,
+                    4_000 * mib,
+                    900 * mib
+                )
+            );
+            Assert(lowHeadroom.ShouldDefer, "system reserve must remain above the LMK threshold");
+
+            var processBudget = ShaderWarmupMemoryPolicy.Evaluate(
+                new ShaderWarmupMemorySnapshot(
+                    0,
+                    false,
+                    3_000 * mib,
+                    512 * mib,
+                    4_000 * mib,
+                    1_400 * mib
+                )
+            );
+            Assert(processBudget.ShouldDefer, "low-RAM devices need a bounded process PSS budget");
+
+            var unavailable = ShaderWarmupMemoryPolicy.Evaluate(
+                ShaderWarmupMemorySnapshot.Unavailable
+            );
+            Assert(
+                !unavailable.ShouldDefer,
+                "missing telemetry must preserve the existing bounded path"
+            );
+
+            var repository = FindRepositoryRoot();
+            var warmup = File.ReadAllText(
+                Path.Combine(repository, "src", "STS2Mobile", "Launcher", "ShaderWarmupScreen.cs")
+            );
+            Assert(
+                warmup.Contains("BeginWarmupMemoryMonitoring", StringComparison.Ordinal)
+                    && warmup.Contains("EndWarmupMemoryMonitoring", StringComparison.Ordinal)
+                    && warmup.Contains(
+                        "ShaderWarmupMemoryPolicy.Evaluate",
+                        StringComparison.Ordinal
+                    ),
+                "the physical warmup path must own and consume Android memory monitoring"
+            );
+            Assert(
+                warmup.Contains("WarmupDeferredForMemoryException", StringComparison.Ordinal)
+                    && warmup.Contains("deferred for memory safety", StringComparison.Ordinal),
+                "memory pressure must take an explicit non-failure completion path"
             );
         }
     );

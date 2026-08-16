@@ -14,5 +14,9 @@
       Include="../../src/STS2Mobile/Launcher/ShaderWarmupState.cs"
       Link="ShaderWarmupState.cs"
     />
+    <Compile
+      Include="../../src/STS2Mobile/Launcher/ShaderWarmupMemoryPolicy.cs"
+      Link="ShaderWarmupMemoryPolicy.cs"
+    />
   </ItemGroup>
 </Project>

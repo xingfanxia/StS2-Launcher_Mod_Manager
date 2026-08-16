@@ -11,6 +11,7 @@ internal sealed class ShaderWarmupState
 {
     private const string CompletedMarkerName = "shader_warmup_version";
     private const string AttemptMarkerName = "shader_warmup_in_progress";
+    private const string ResultMarkerName = "shader_warmup_result";
 
     private readonly string _version;
 
@@ -19,17 +20,19 @@ internal sealed class ShaderWarmupState
         _version = version.ToString();
         CompletedMarkerPath = Path.Combine(dataDirectory, CompletedMarkerName);
         AttemptMarkerPath = Path.Combine(dataDirectory, AttemptMarkerName);
+        ResultMarkerPath = Path.Combine(dataDirectory, ResultMarkerName);
     }
 
     internal string CompletedMarkerPath { get; }
     internal string AttemptMarkerPath { get; }
+    internal string ResultMarkerPath { get; }
 
     public ShaderWarmupCheck Check()
     {
         if (MarkerMatches(CompletedMarkerPath))
         {
             DeleteAttemptMarker();
-            return ShaderWarmupCheck.Completed();
+            return ReadCompletedResult();
         }
 
         if (MarkerMatches(AttemptMarkerPath))
@@ -37,7 +40,10 @@ internal sealed class ShaderWarmupState
             // The previous process died after Begin() but before Complete().
             // Shader precompilation is an optimization, so permanently skip
             // this warmup version and let a clean process start the game.
-            Complete();
+            Complete(
+                ShaderWarmupOutcome.Interrupted,
+                "previous warmup process ended before publishing a result"
+            );
             return ShaderWarmupCheck.Recovered();
         }
 
@@ -46,12 +52,44 @@ internal sealed class ShaderWarmupState
 
     public void Begin() => WriteMarkerAtomically(AttemptMarkerPath);
 
-    public void Complete()
+    public void Complete() =>
+        Complete(ShaderWarmupOutcome.Completed, "all scheduled shaders were processed");
+
+    public void Complete(ShaderWarmupOutcome outcome, string reason)
     {
-        // Publish completion before removing the attempt marker. If the process
-        // dies between these operations, Check() still observes completion.
+        // Publish the diagnostic result and then completion before removing the
+        // attempt marker. If the process dies between writes, Check() observes
+        // the attempt and safely records an interrupted/bypassed result.
+        WriteTextAtomically(ResultMarkerPath, $"{_version}\n{outcome}\n{SanitizeReason(reason)}");
         WriteMarkerAtomically(CompletedMarkerPath);
         DeleteAttemptMarker();
+    }
+
+    private ShaderWarmupCheck ReadCompletedResult()
+    {
+        try
+        {
+            var fields = File.ReadAllLines(ResultMarkerPath);
+            if (
+                fields.Length >= 2
+                && fields[0].Trim() == _version
+                && System.Enum.TryParse<ShaderWarmupOutcome>(fields[1], out var outcome)
+            )
+            {
+                var reason = fields.Length >= 3 ? fields[2] : "result reason unavailable";
+                return ShaderWarmupCheck.Completed(outcome, reason);
+            }
+        }
+        catch
+        {
+            // Older installations have only the version marker. Completion is
+            // still authoritative; the additional result is diagnostic only.
+        }
+
+        return ShaderWarmupCheck.Completed(
+            ShaderWarmupOutcome.Completed,
+            "current warmup version already completed"
+        );
     }
 
     private bool MarkerMatches(string path) =>
@@ -59,9 +97,20 @@ internal sealed class ShaderWarmupState
 
     private void WriteMarkerAtomically(string path)
     {
+        WriteTextAtomically(path, _version);
+    }
+
+    private static void WriteTextAtomically(string path, string content)
+    {
         var temporaryPath = path + ".tmp";
-        File.WriteAllText(temporaryPath, _version);
+        File.WriteAllText(temporaryPath, content);
         File.Move(temporaryPath, path, overwrite: true);
+    }
+
+    private static string SanitizeReason(string reason)
+    {
+        var sanitized = (reason ?? "reason unavailable").Replace('\r', ' ').Replace('\n', ' ');
+        return sanitized.Length <= 200 ? sanitized : sanitized[..200];
     }
 
     private void DeleteAttemptMarker()
@@ -73,25 +122,45 @@ internal sealed class ShaderWarmupState
 
 internal readonly struct ShaderWarmupCheck
 {
-    private ShaderWarmupCheck(bool needsWarmup, bool recovered, string reason)
+    private ShaderWarmupCheck(
+        bool needsWarmup,
+        bool recovered,
+        ShaderWarmupOutcome? outcome,
+        string reason
+    )
     {
         NeedsWarmup = needsWarmup;
         RecoveredInterruptedAttempt = recovered;
+        Outcome = outcome;
         Reason = reason;
     }
 
     public bool NeedsWarmup { get; }
     public bool RecoveredInterruptedAttempt { get; }
+    public ShaderWarmupOutcome? Outcome { get; }
     public string Reason { get; }
 
     public static ShaderWarmupCheck Required() =>
-        new(true, false, "no marker for the current warmup version");
+        new(true, false, null, "no marker for the current warmup version");
 
-    public static ShaderWarmupCheck Completed() =>
-        new(false, false, "current warmup version already completed");
+    public static ShaderWarmupCheck Completed(ShaderWarmupOutcome outcome, string reason) =>
+        new(false, false, outcome, reason);
 
     public static ShaderWarmupCheck Recovered() =>
-        new(false, true, "previous warmup attempt was interrupted");
+        new(
+            false,
+            true,
+            ShaderWarmupOutcome.Interrupted,
+            "previous warmup attempt was interrupted"
+        );
+}
+
+internal enum ShaderWarmupOutcome
+{
+    Completed,
+    DeferredMemoryPressure,
+    FailedButBypassed,
+    Interrupted,
 }
 
 // The completion source exists before Initialize() can produce a result. This

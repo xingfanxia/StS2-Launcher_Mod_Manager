@@ -9,6 +9,7 @@ import android.content.Intent;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Debug;
 import android.os.Environment;
 import android.provider.Settings;
 import android.util.Log;
@@ -82,6 +83,9 @@ public class GodotApp extends GodotActivity {
 	private static StartupRecoveryJournal.State startupRecoveryState;
 	private static long startupAttemptId;
 	private static volatile boolean previousExitReportReady;
+	private volatile boolean warmupMemoryMonitoring;
+	private volatile boolean warmupLowMemory;
+	private volatile int warmupTrimLevel;
 
 	private volatile boolean pickerActive = false;
 	private final List<File> stagedAtlasCacheDirs = new ArrayList<>();
@@ -815,6 +819,59 @@ public class GodotApp extends GodotActivity {
 	public void onResume() {
 		super.onResume();
 		updateWindowAppearance.run();
+	}
+
+	@Override
+	public void onTrimMemory(int level) {
+		super.onTrimMemory(level);
+		if (!warmupMemoryMonitoring || level <= warmupTrimLevel) return;
+		warmupTrimLevel = level;
+		Log.i(TAG, "[ShaderWarmup] Android trim-memory level=" + level);
+	}
+
+	@Override
+	public void onLowMemory() {
+		super.onLowMemory();
+		if (!warmupMemoryMonitoring) return;
+		warmupLowMemory = true;
+		Log.w(TAG, "[ShaderWarmup] Android low-memory callback received");
+	}
+
+	// C# owns this monitor only for the optional shader warmup. A new run starts
+	// from fresh callback state so an old background trim signal cannot suppress
+	// warmup forever.
+	public void beginWarmupMemoryMonitoring() {
+		warmupTrimLevel = 0;
+		warmupLowMemory = false;
+		warmupMemoryMonitoring = true;
+	}
+
+	public void endWarmupMemoryMonitoring() {
+		warmupMemoryMonitoring = false;
+	}
+
+	// Pipe-delimited primitive fields keep the Godot/JNI boundary narrow and
+	// deterministic: trim|low|available|LMK-threshold|total|process-PSS.
+	// This contains no path, account, device identifier, credential, or user data.
+	public String getWarmupMemorySnapshot() {
+		try {
+			ActivityManager manager =
+					(ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+			if (manager == null) return "0|0|-1|-1|-1|-1";
+
+			ActivityManager.MemoryInfo info = new ActivityManager.MemoryInfo();
+			manager.getMemoryInfo(info);
+			long processPssBytes = (long) Debug.getPss() * 1024L;
+			return warmupTrimLevel
+					+ "|" + (warmupLowMemory || info.lowMemory ? "1" : "0")
+					+ "|" + info.availMem
+					+ "|" + info.threshold
+					+ "|" + info.totalMem
+					+ "|" + processPssBytes;
+		} catch (Exception ex) {
+			Log.w(TAG, "[ShaderWarmup] memory snapshot unavailable", ex);
+			return "0|0|-1|-1|-1|-1";
+		}
 	}
 
 	private long lastBackPressTimeMs = 0L;

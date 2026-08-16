@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.Threading.Tasks;
 using Godot;
 using STS2Mobile.Launcher.Components;
@@ -123,9 +124,13 @@ public class ShaderWarmupScreen : Control
         var sw = Stopwatch.StartNew();
         var batch = new List<(string path, Material material)>(BatchSize);
         SubViewport viewport = null;
+        var outcome = ShaderWarmupOutcome.Completed;
+        var outcomeReason = "all scheduled shaders were processed";
+        BeginWarmupMemoryMonitoring();
 
         try
         {
+            ThrowIfWarmupShouldDefer();
             _statusLabel.Text = "Scanning for shaders...";
             await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
 
@@ -174,6 +179,10 @@ public class ShaderWarmupScreen : Control
                             viewport,
                             whiteTex
                         );
+                }
+                catch (WarmupDeferredForMemoryException)
+                {
+                    throw;
                 }
                 catch (Exception ex)
                 {
@@ -234,6 +243,10 @@ public class ShaderWarmupScreen : Control
                         }
                     }
                 }
+                catch (WarmupDeferredForMemoryException)
+                {
+                    throw;
+                }
                 catch (Exception ex)
                 {
                     PatchHelper.Log(
@@ -267,8 +280,20 @@ public class ShaderWarmupScreen : Control
 
             await ToSignal(GetTree().CreateTimer(0.5), SceneTreeTimer.SignalName.Timeout);
         }
+        catch (WarmupDeferredForMemoryException ex)
+        {
+            outcome = ShaderWarmupOutcome.DeferredMemoryPressure;
+            outcomeReason = ex.Message;
+            _statusLabel.Text = "Continuing with on-demand shaders...";
+            _detailLabel.Text = "Warmup stopped to protect available memory.";
+            PatchHelper.Log(
+                $"[ShaderWarmup] deferred for memory safety after {sw.ElapsedMilliseconds}ms: {ex.Message}"
+            );
+        }
         catch (Exception ex)
         {
+            outcome = ShaderWarmupOutcome.FailedButBypassed;
+            outcomeReason = ex.GetType().Name;
             PatchHelper.Log($"[ShaderWarmup] Failed: {ex}");
         }
         finally
@@ -278,9 +303,10 @@ public class ShaderWarmupScreen : Control
             ReleaseMaterials(batch);
             if (viewport != null && GodotObject.IsInstanceValid(viewport))
                 viewport.QueueFree();
+            EndWarmupMemoryMonitoring();
         }
 
-        CompleteStateAndSignalRestart();
+        CompleteStateAndSignalRestart(outcome, outcomeReason);
     }
 
     private async Task QueueMaterialForWarmupAsync(
@@ -311,7 +337,10 @@ public class ShaderWarmupScreen : Control
 
         batch.Add((path, material));
         if (batch.Count >= BatchSize)
+        {
             await FlushMaterialBatchAsync(batch, viewport, whiteTex);
+            ThrowIfWarmupShouldDefer();
+        }
     }
 
     private async Task FlushMaterialBatchAsync(
@@ -373,7 +402,106 @@ public class ShaderWarmupScreen : Control
         // A long stretch of non-material scenes would otherwise run without the
         // batch flush yields above. Keep input/rendering responsive regardless.
         if (processed % 25 == 0)
+        {
             await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+            ThrowIfWarmupShouldDefer();
+        }
+    }
+
+    private static void BeginWarmupMemoryMonitoring()
+    {
+        try
+        {
+            LauncherModel.GetGodotApp()?.Call("beginWarmupMemoryMonitoring");
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log($"[ShaderWarmup] memory monitor start failed: {ex.Message}");
+        }
+    }
+
+    private static void EndWarmupMemoryMonitoring()
+    {
+        try
+        {
+            LauncherModel.GetGodotApp()?.Call("endWarmupMemoryMonitoring");
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log($"[ShaderWarmup] memory monitor stop failed: {ex.Message}");
+        }
+    }
+
+    private static void ThrowIfWarmupShouldDefer()
+    {
+        var decision = ShaderWarmupMemoryPolicy.Evaluate(ReadWarmupMemorySnapshot());
+        if (decision.ShouldDefer)
+            throw new WarmupDeferredForMemoryException(decision.Reason);
+    }
+
+    private static ShaderWarmupMemorySnapshot ReadWarmupMemorySnapshot()
+    {
+        try
+        {
+            var app = LauncherModel.GetGodotApp();
+            if (app == null)
+                return ShaderWarmupMemorySnapshot.Unavailable;
+
+            var encoded = (string)app.Call("getWarmupMemorySnapshot");
+            var fields = encoded?.Split('|');
+            if (
+                fields == null
+                || fields.Length != 6
+                || !int.TryParse(
+                    fields[0],
+                    NumberStyles.Integer,
+                    CultureInfo.InvariantCulture,
+                    out var trimLevel
+                )
+                || (fields[1] != "0" && fields[1] != "1")
+                || !long.TryParse(
+                    fields[2],
+                    NumberStyles.Integer,
+                    CultureInfo.InvariantCulture,
+                    out var availableBytes
+                )
+                || !long.TryParse(
+                    fields[3],
+                    NumberStyles.Integer,
+                    CultureInfo.InvariantCulture,
+                    out var lowMemoryThresholdBytes
+                )
+                || !long.TryParse(
+                    fields[4],
+                    NumberStyles.Integer,
+                    CultureInfo.InvariantCulture,
+                    out var totalBytes
+                )
+                || !long.TryParse(
+                    fields[5],
+                    NumberStyles.Integer,
+                    CultureInfo.InvariantCulture,
+                    out var processPssBytes
+                )
+            )
+            {
+                return ShaderWarmupMemorySnapshot.Unavailable;
+            }
+
+            return new ShaderWarmupMemorySnapshot(
+                trimLevel,
+                fields[1] == "1",
+                availableBytes,
+                lowMemoryThresholdBytes,
+                totalBytes,
+                processPssBytes
+            );
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log($"[ShaderWarmup] memory snapshot bridge failed: {ex.Message}");
+            return ShaderWarmupMemorySnapshot.Unavailable;
+        }
     }
 
     private static void ReleaseMaterials(List<(string path, Material material)> batch)
@@ -383,14 +511,20 @@ public class ShaderWarmupScreen : Control
         batch.Clear();
     }
 
-    private void CompleteStateAndSignalRestart()
+    private sealed class WarmupDeferredForMemoryException : Exception
+    {
+        public WarmupDeferredForMemoryException(string message)
+            : base(message) { }
+    }
+
+    private void CompleteStateAndSignalRestart(ShaderWarmupOutcome outcome, string reason)
     {
         try
         {
             // Even a managed scan failure completes this optional warmup version.
             // The clean process after restart will compile missed shaders on demand
             // instead of entering a deterministic restart loop.
-            _state.Complete();
+            _state.Complete(outcome, reason);
             _operation.Complete(restartRequired: true);
         }
         catch (Exception ex)

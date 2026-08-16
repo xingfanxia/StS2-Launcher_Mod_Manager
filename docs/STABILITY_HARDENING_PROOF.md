@@ -76,3 +76,51 @@ configuration digest, and (in the mod-loading phase) a bounded mod id.
 
 Remaining final device gate: verify attempt/reconcile/healthy records with the
 signed cumulative build on the physical device.
+
+## Phase 2 — adaptive shader warmup
+
+### Root cause and contract
+
+Warmup v7 limited the live native material set to eight, but that bound did not
+react to device pressure or cap the total process working set. On a lower-memory
+device Android could therefore kill the first optional warmup before the
+interrupted-attempt marker protected the next boot.
+
+The warmup now owns a narrow Android monitor for only its lifetime. At the
+initial boundary, every released material batch, and every 25 otherwise-yielding
+sources it evaluates the highest `onTrimMemory` callback, `MemoryInfo.lowMemory`,
+available memory relative to the LMK threshold, total device memory, and process
+PSS. It defers when any reliable signal crosses the safety policy; unavailable
+telemetry preserves the already batch-bounded path. The snapshot contains only
+numeric memory fields and crosses no user-data or identity boundary.
+
+Deferral is an explicit non-failure path. The current batch and viewport are
+released, the result is atomically recorded as `DeferredMemoryPressure`, and a
+clean process continues with normal on-demand shader compilation. Completed,
+failed-but-bypassed, and interrupted outcomes are also distinct. Every terminal
+outcome publishes the current warmup-version marker, so no optional failure can
+become a repeated boot loop.
+
+### Focused and build evidence
+
+- The focused policy regression first failed with the provider absent, then
+  passed healthy, trim-level, system-low, low-headroom, process-budget, and
+  unavailable-telemetry cases. State tests pass all four terminal outcomes and
+  prove deferred/failed/interrupted attempts do not rerun.
+- Source contracts preserve the eight-material streaming/disposal bound and
+  require the physical warmup path to begin, consume, and end Android monitoring
+  while treating memory deferral separately from scan failure.
+- `tools/stability-tests-java/run.sh` remains green for exit classification,
+  the durable startup journal, and cache staging. The read-only device harness,
+  MemberRef/interface audit, patch-target audit, and Workshop sync tests also
+  pass in the pinned build pipeline.
+- Pinned amd64 Docker APK pipeline: C# publish succeeded, Java/JNI compiled, 47
+  Gradle tasks passed, 52 game-scoped MemberRefs and 3 implemented interfaces
+  were present, all 59 required patch/reflection rules passed, and the unsigned
+  artifact SHA-256 is
+  `a145ad4fca525111a6fa8406147c1437f67101ddaf7fd3daea2de4b9fa96c9c5`.
+
+Remaining final device gate: install the cumulative signed build once, exercise
+both normal warmup and a controlled Android pressure callback, and prove the
+process reaches the menu without Crash/ANR/LMK while preserving installed mods,
+saves, login, branch, and language settings.
