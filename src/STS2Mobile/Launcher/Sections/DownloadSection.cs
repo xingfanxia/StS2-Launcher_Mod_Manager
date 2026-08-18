@@ -36,7 +36,7 @@ public class DownloadSection : VBoxContainer
         _progressBar.Visible = true;
         _progressBar.Value = pct;
         _progressLabel.Visible = true;
-        _progressLabel.Text = text;
+        _progressLabel.Text = Loc.Authored(text);
     }
 
     public void ShowProgress(string text)
@@ -45,7 +45,7 @@ public class DownloadSection : VBoxContainer
         _progressBar.Visible = true;
         _progressBar.Value = 0;
         _progressLabel.Visible = true;
-        _progressLabel.Text = text;
+        _progressLabel.Text = Loc.Authored(text);
     }
 
     public void HideProgress()
@@ -56,12 +56,12 @@ public class DownloadSection : VBoxContainer
 
     public void SetButtonDisabled(bool disabled) => _downloadButton.Disabled = disabled;
 
-    public void SetButtonText(string text) => _downloadButton.Text = text;
+    public void SetButtonText(string text) => _downloadButton.Text = Loc.Authored(text);
 
     public void Reset(string buttonText = "DOWNLOAD GAME FILES")
     {
         _downloadButton.Disabled = false;
-        _downloadButton.Text = buttonText;
+        _downloadButton.Text = Loc.Authored(buttonText);
         _progressBar.Visible = false;
         _progressBar.Value = 0;
         _progressLabel.Visible = false;

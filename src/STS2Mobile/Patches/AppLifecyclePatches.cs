@@ -1,5 +1,7 @@
 using System;
 using System.Reflection;
+using System.Threading;
+using System.Threading.Tasks;
 using Godot;
 using HarmonyLib;
 using STS2Mobile.Steam;
@@ -10,6 +12,9 @@ namespace STS2Mobile.Patches;
 // tree, flushes cloud writes on background. Opens the pause menu on resume.
 public static class AppLifecyclePatches
 {
+    private static int _backgroundFlushInProgress;
+    private static int _quitRestartInProgress;
+
     public static void Apply(Harmony harmony)
     {
         var bgHandlerType = typeof(MegaCrit.Sts2.Core.Nodes.NGame).Assembly.GetType(
@@ -79,14 +84,37 @@ public static class AppLifecyclePatches
             var node = (Node)__instance;
             node.GetTree().Paused = true;
 
-            // Flush pending cloud writes before the OS may kill the process
-            try
+            // Flush pending cloud writes before the OS may kill the process, but
+            // never block Activity.onPause / the Godot main thread while the
+            // writer is retrying a slow network request.
+            var cloudStore = SteamKit2CloudSaveStore.Instance;
+            if (Interlocked.Exchange(ref _backgroundFlushInProgress, 1) == 0)
             {
-                SteamKit2CloudSaveStore.Instance?.Flush(5000);
-            }
-            catch (Exception ex)
-            {
-                PatchHelper.Log($"Cloud flush on background failed: {ex.Message}");
+                try
+                {
+                    _ = Task.Run(() =>
+                    {
+                        try
+                        {
+                            bool drained = cloudStore?.Flush(5000) ?? true;
+                            if (!drained)
+                                PatchHelper.Log("Cloud flush on background timed out");
+                        }
+                        catch (Exception ex)
+                        {
+                            PatchHelper.Log($"Cloud flush on background failed: {ex.Message}");
+                        }
+                        finally
+                        {
+                            Interlocked.Exchange(ref _backgroundFlushInProgress, 0);
+                        }
+                    });
+                }
+                catch
+                {
+                    Interlocked.Exchange(ref _backgroundFlushInProgress, 0);
+                    throw;
+                }
             }
 
             PatchHelper.Log("App backgrounded: audio muted, SceneTree paused");
@@ -238,34 +266,78 @@ public static class AppLifecyclePatches
 
     // Replaces the default quit (force-kill) with a clean app restart via GodotApp.
     // Saves are already written by the original Quit() callers before this runs.
-    // The flush blocks until cloud uploads truly complete — CloudWriteQueue's
-    // _actionInProgress flag plus the queue depth signal that. The timeout is a
-    // catastrophic ceiling for unreachable-Steam scenarios, not the typical wait:
-    // healthy uploads finish in 1-5 s, cellular ones in 10-15 s, a per-file 3x
-    // retry budget caps at ~90 s, and 5 minutes covers multi-file queues. Going
-    // higher just means hanging on the user when Steam itself is dead.
+    // CloudWriteQueue.Flush polls synchronously. Run it off-main so Quit cannot
+    // become a five-minute ANR on a slow/unreachable network. Sixty seconds matches
+    // the launcher's other restart path; if it times out the local save remains the
+    // source of truth and the next launch handshake can repair cloud state.
     public static bool QuitPrefix(object __instance)
     {
         try
         {
-            try
+            if (Interlocked.Exchange(ref _quitRestartInProgress, 1) != 0)
             {
-                SteamKit2CloudSaveStore.Instance?.Flush(300_000);
+                PatchHelper.Log("NGame.Quit ignored while cloud drain/restart is already pending");
+                return false;
             }
-            catch { }
 
-            PatchHelper.Log("NGame.Quit intercepted, restarting app");
+            PatchHelper.Log("NGame.Quit intercepted, draining cloud writes off-main");
+            var cloudStore = SteamKit2CloudSaveStore.Instance;
+            _ = Task.Run(() =>
+            {
+                try
+                {
+                    bool drained = cloudStore?.Flush(60_000) ?? true;
+                    if (!drained)
+                        PatchHelper.Log("[Cloud] Pre-quit flush timed out, restarting anyway");
+                }
+                catch (Exception ex)
+                {
+                    PatchHelper.Log(
+                        $"[Cloud] Pre-quit flush failed, restarting anyway: {ex.Message}"
+                    );
+                }
+
+                try
+                {
+                    Callable.From(RestartAfterQuitFlush).CallDeferred();
+                }
+                catch (Exception ex)
+                {
+                    // The engine can already be tearing down when the worker
+                    // finishes. Never leave the one-shot latch permanently set:
+                    // a later Quit must be able to retry or fall back normally.
+                    Interlocked.Exchange(ref _quitRestartInProgress, 0);
+                    PatchHelper.Log($"Failed to queue deferred quit restart: {ex.Message}");
+                }
+            });
+            return false;
+        }
+        catch (Exception ex)
+        {
+            Interlocked.Exchange(ref _quitRestartInProgress, 0);
+            PatchHelper.Log($"QuitPrefix failed, falling back to default: {ex.Message}");
+            return true;
+        }
+    }
+
+    private static void RestartAfterQuitFlush()
+    {
+        try
+        {
+            PatchHelper.Log("NGame.Quit cloud drain finished; restarting app");
             var jcw = Engine.GetSingleton("JavaClassWrapper");
             var wrapper = (GodotObject)
                 jcw.Call("wrap", "com.game.sts2launcher.modmanager.GodotApp");
             var godotApp = (GodotObject)wrapper.Call("getInstance");
             godotApp.Call("restartApp");
-            return false;
         }
         catch (Exception ex)
         {
-            PatchHelper.Log($"QuitPrefix failed, falling back to default: {ex.Message}");
-            return true;
+            PatchHelper.Log($"Deferred quit restart failed: {ex.Message}");
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _quitRestartInProgress, 0);
         }
     }
 }

@@ -121,6 +121,7 @@ public class LauncherController
         _model.DownloadFailed += msg =>
             _runOnMainThread(() =>
             {
+                _pendingBranchSwitch = false;
                 if (msg == null)
                 {
                     _view.Download.Reset();
@@ -132,6 +133,7 @@ public class LauncherController
         _model.DownloadCancelled += () =>
             _runOnMainThread(() =>
             {
+                _pendingBranchSwitch = false;
                 _view.SetStatus("Download cancelled");
                 _view.Download.SetButtonDisabled(false);
             });
@@ -562,11 +564,23 @@ public class LauncherController
             }
         }
 
-        LauncherModel.SaveSelectedBranch(picked);
+        bool branchSwitch = picked != current && LauncherModel.GameFilesReady();
+        if (branchSwitch)
+        {
+            var confirmed = await ConfirmAsync(
+                $"Switch to '{picked}'?\n\nGame files (~3GB) will be redownloaded. Login and saves are kept."
+            );
+            if (!confirmed)
+            {
+                _view.Download.Reset();
+                return;
+            }
+            _pendingBranchSwitch = true;
+        }
         _view.Download.ShowProgress(
             picked == "public" ? "Connecting to Steam..." : $"Connecting to Steam ({picked})..."
         );
-        await _model.StartDownloadAsync(picked);
+        await _model.StartDownloadAsync(picked, forceFresh: branchSwitch);
     }
 
     private async void OnCheckGameUpdatePressed()
@@ -605,8 +619,6 @@ public class LauncherController
             }
         }
 
-        LauncherModel.SaveSelectedBranch(picked);
-
         // Branch switch + existing files = force a fresh download. The delta path
         // has produced broken installs (e.g. card art mismatches) when going from
         // public ↔ public-beta even though every file passes its manifest SHA-1,
@@ -622,18 +634,11 @@ public class LauncherController
                 _checkingForGameUpdate = false;
                 return;
             }
-            _model.WipeGameFiles();
-            // Issue #45: 사용자가 곧 이어 DOWNLOAD 버튼을 누를 것이고, 다운 완료 시
-            // PCK 가 in-process 갱신되어 dst dll 과 mismatch. 다운로드 완료 callback
-            // 이 이 플래그를 보고 NeedsRestartAfterBranchSwitch 를 set 한다.
             _pendingBranchSwitch = true;
-            _runOnMainThread(() =>
-            {
-                _view.Actions.HideAll();
-                _view.Download.Visible = true;
-                _view.Download.Reset("DOWNLOAD GAME FILES");
-                _view.SetStatus($"Switched to {picked}. Tap DOWNLOAD GAME FILES to redownload.");
-            });
+            _view.Actions.HideAll();
+            _view.Download.Visible = true;
+            _view.Download.ShowProgress($"Connecting to Steam ({picked})...");
+            await _model.StartDownloadAsync(picked, forceFresh: true);
             _checkingForGameUpdate = false;
             return;
         }
@@ -1254,7 +1259,7 @@ public class LauncherController
     }
 
     // P1-2 (G7) — restartApp bypasses NGame.Quit entirely (that's where
-    // QuitPrefix's own Flush(300s) lives), so any cloud writes still queued
+    // QuitPrefix's own off-main Flush(60s) lives), so any cloud writes still queued
     // at these points (AtlasWipe confirm, update-restart) would be silently
     // dropped — the cloud stays stale until the NEXT session's handshake
     // self-heals it, and in the meantime another device could pull the stale

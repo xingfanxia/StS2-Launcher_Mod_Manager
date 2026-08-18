@@ -14,12 +14,16 @@ public class SimpleResultDialog : ColorRect
 {
     public event Action Closed;
 
+    private bool _closed;
+
     // Awaitable convenience wrapper — mirrors the TCS-around-an-event pattern
     // LauncherController.ConfirmAsync uses for StyledDialog (LauncherController.cs
     // :795-807), just for the single Closed event instead of Confirmed/Cancelled.
     public static Task ShowAsync(Node parent, bool success, string message, float scale)
     {
-        var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var tcs = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
         var dialog = new SimpleResultDialog(success, message, scale);
         dialog.Closed += () => tcs.TrySetResult(true);
         parent.AddChild(dialog);
@@ -29,6 +33,7 @@ public class SimpleResultDialog : ColorRect
     public SimpleResultDialog(bool success, string message, float scale)
     {
         ModalGate.Register(this);
+        TreeExiting += FireClosed;
 
         SetAnchorsPreset(LayoutPreset.FullRect);
         Color = new Color(0, 0, 0, 0.6f);
@@ -57,7 +62,13 @@ public class SimpleResultDialog : ColorRect
         vbox.AddChild(scroll);
         TouchScroll.Attach(scroll);
 
-        var label = new StyledLabel(message, scale, fontSize: 14, align: HorizontalAlignment.Left);
+        var label = new StyledLabel(
+            Loc.Authored(message),
+            scale,
+            fontSize: 14,
+            align: HorizontalAlignment.Left,
+            provenance: TextProvenance.LauncherTemplateWithExternalContent
+        );
         label.AutowrapMode = TextServer.AutowrapMode.WordSmart;
         label.CustomMinimumSize = new Vector2((int)(340 * scale), 0);
         label.SizeFlagsHorizontal = SizeFlags.ExpandFill;
@@ -88,12 +99,20 @@ public class SimpleResultDialog : ColorRect
         okButton.CustomMinimumSize = new Vector2((int)(140 * scale), okButton.CustomMinimumSize.Y);
         okButton.Pressed += () =>
         {
+            FireClosed();
             QueueFree();
-            Closed?.Invoke();
         };
         buttonRow.AddChild(okButton);
 
         center.AddChild(dialogBox);
         AddChild(center);
+    }
+
+    private void FireClosed()
+    {
+        if (_closed)
+            return;
+        _closed = true;
+        Closed?.Invoke();
     }
 }

@@ -32,14 +32,15 @@ public class StyledButton : Button
         float scale,
         int fontSize = Ui.FontBody,
         int height = Ui.TouchHeight,
-        ButtonVariant variant = ButtonVariant.Secondary
+        ButtonVariant variant = ButtonVariant.Secondary,
+        TextProvenance provenance = TextProvenance.LauncherAuthored
     )
     {
         Text = text;
         CustomMinimumSize = new Vector2(0, Ui.S(scale, height));
         AddThemeFontSizeOverride("font_size", Ui.S(scale, fontSize));
         ApplyVariant(scale, variant);
-        Loc.Watch(this);
+        Loc.Watch(this, provenance);
     }
 
     public void ApplyVariant(float scale, ButtonVariant variant)

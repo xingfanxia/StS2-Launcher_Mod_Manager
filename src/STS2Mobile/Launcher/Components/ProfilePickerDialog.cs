@@ -28,11 +28,9 @@ public enum PickerAction
 // scoped to that single slot. Closing without picking a row resolves null.
 public class ProfilePickerDialog : ColorRect
 {
-    private readonly TaskCompletionSource<SyncDecisionResult> _result = new(
-        TaskCreationOptions.RunContinuationsAsynchronously
-    );
+    private readonly DialogCompletion<SyncDecisionResult> _completion = new(null);
 
-    public Task<SyncDecisionResult> Result => _result.Task;
+    public Task<SyncDecisionResult> Result => _completion.Task;
 
     // Issue #64: set by the "프로필 복제"/"백업 복원" buttons in the closing button
     // row, alongside resolving Result with null (same as the plain "닫기"
@@ -89,6 +87,9 @@ public class ProfilePickerDialog : ColorRect
         float viewportHeight
     )
     {
+        ModalGate.Register(this);
+        TreeExiting += _completion.CompleteFallback;
+
         var sz = ResolveSizing(viewportHeight);
 
         SetAnchorsPreset(LayoutPreset.FullRect);
@@ -195,8 +196,8 @@ public class ProfilePickerDialog : ColorRect
 
     private void Resolve(SyncDecisionResult slot)
     {
+        _completion.Complete(slot);
         QueueFree();
-        _result.TrySetResult(slot);
     }
 
     private static Control BuildRow(

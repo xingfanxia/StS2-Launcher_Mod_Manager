@@ -8,7 +8,8 @@ public class StyledLabel : Label
         string text,
         float scale,
         int fontSize = 15,
-        HorizontalAlignment align = HorizontalAlignment.Center
+        HorizontalAlignment align = HorizontalAlignment.Center,
+        TextProvenance provenance = TextProvenance.LauncherAuthored
     )
     {
         Text = text;
@@ -18,6 +19,6 @@ public class StyledLabel : Label
         // the row the tap lands.
         MouseFilter = MouseFilterEnum.Ignore;
         AddThemeFontSizeOverride("font_size", (int)(fontSize * scale));
-        Loc.Watch(this);
+        Loc.Watch(this, provenance);
     }
 }

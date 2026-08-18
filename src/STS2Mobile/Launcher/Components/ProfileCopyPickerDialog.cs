@@ -16,11 +16,9 @@ namespace STS2Mobile.Launcher.Components;
 // per-slot SaveProgressSummary (one side only).
 public class ProfileCopyPickerDialog : ColorRect
 {
-    private readonly TaskCompletionSource<SaveProgressSummary> _result = new(
-        TaskCreationOptions.RunContinuationsAsynchronously
-    );
+    private readonly DialogCompletion<SaveProgressSummary> _completion = new(null);
 
-    public Task<SaveProgressSummary> Result => _result.Task;
+    public Task<SaveProgressSummary> Result => _completion.Task;
 
     // Same struct/formula as ProfilePickerDialog.DialogSizing — see that file
     // for the "글자가 너무 작아" rationale behind the floors.
@@ -63,6 +61,7 @@ public class ProfileCopyPickerDialog : ColorRect
     )
     {
         ModalGate.Register(this);
+        TreeExiting += _completion.CompleteFallback;
 
         var sz = ResolveSizing(viewportHeight);
 
@@ -127,8 +126,8 @@ public class ProfileCopyPickerDialog : ColorRect
 
     private void Resolve(SaveProgressSummary slot)
     {
+        _completion.Complete(slot);
         QueueFree();
-        _result.TrySetResult(slot);
     }
 
     private static Control BuildRow(

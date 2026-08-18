@@ -14,6 +14,8 @@ namespace STS2Mobile;
 // patches, and falls back to standalone launcher mode if game files aren't present.
 public static class ModEntry
 {
+    private const string GameplayPerformanceDisableEnvironmentVariable =
+        "STS2_DISABLE_GAMEPLAY_PERFORMANCE_FIXES";
     private static Harmony _harmony;
     private static bool _applied = false;
 
@@ -78,6 +80,34 @@ public static class ModEntry
             Console.Error.WriteLine($"[STS2Mobile] [Diag] TMPDIR override failed: {ex.Message}");
         }
 
+        // GodotApp sets XDG_CONFIG_HOME from Android's real getFilesDir() before
+        // native/.NET bootstrap. Do not call Godot.OS here: Apply is entered from
+        // gd_mono while native singletons are still settling, and an early
+        // OS.GetUserDataDir() caused a StringName _reset_state abort on device.
+        // Retain a managed-only fallback for unusual hosts where Java setenv failed.
+        try
+        {
+            var configDir = System.Environment.GetEnvironmentVariable("XDG_CONFIG_HOME");
+            if (string.IsNullOrWhiteSpace(configDir))
+            {
+                var assemblyDir = Path.GetDirectoryName(typeof(ModEntry).Assembly.Location);
+                if (string.IsNullOrWhiteSpace(assemblyDir))
+                    throw new InvalidOperationException(
+                        "STS2Mobile assembly directory is unavailable"
+                    );
+                configDir = Path.Combine(assemblyDir, ".config");
+                System.Environment.SetEnvironmentVariable("XDG_CONFIG_HOME", configDir);
+            }
+            Directory.CreateDirectory(configDir);
+            Console.Error.WriteLine($"[STS2Mobile] [Diag] XDG_CONFIG_HOME -> {configDir}");
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine(
+                $"[STS2Mobile] [Diag] XDG_CONFIG_HOME override failed: {ex.Message}"
+            );
+        }
+
         PatchHelper.Log("Initializing STS2Mobile...");
 
         _harmony = new Harmony("com.sts2mobile");
@@ -105,6 +135,7 @@ public static class ModEntry
         // in-game alert. All game-independent, all fail-safe (errors degrade
         // to current behavior, invisible to users without gated mods).
         ModAssemblyRegistry.Install();
+        QuickRestartPerformanceCompatPatches.Install(_harmony);
         ModPlatformSpoofPatches.Apply(_harmony);
         ModExceptionAttributionPatches.Apply(_harmony);
         ModGuardAlert.StartTestTriggerWatcher();
@@ -151,13 +182,32 @@ public static class ModEntry
             EarlyAccessDisclaimerPatches.Apply(_harmony);
             FeedbackScreenPatches.Apply(_harmony);
             CombatBackgroundPatches.Apply(_harmony);
+            bool disableGameplayPerformanceFixes = string.Equals(
+                System.Environment.GetEnvironmentVariable(
+                    GameplayPerformanceDisableEnvironmentVariable
+                ),
+                "1",
+                StringComparison.Ordinal
+            );
+            if (disableGameplayPerformanceFixes)
+            {
+                PatchHelper.Log("[FrameProbe] gameplay performance fixes disabled for baseline");
+            }
+            else
+            {
+                GameLoadFramePacingPatches.Apply(_harmony);
+                DeckViewPerformancePatches.Apply(_harmony);
+            }
+            DebugTransitionTimingPatches.Apply(_harmony);
             LanMultiplayerPatcher.Apply(_harmony);
             ModLoaderPatches.Apply(_harmony);
+            DebugModLoadTimingPatches.Apply(_harmony);
             // issue #78: mod FMOD banks live in pcks on external storage, which the
             // GDExtension's FMOD file thread can't open (game banks are app-internal).
             // Copy each loaded mod's bank(s) into app-internal storage and load them
             // ourselves once every mod pck is mounted.
             FmodBankPatches.Apply(_harmony);
+            CoveredStartupLogoPatches.Apply(_harmony);
             LauncherPatches.Apply(_harmony);
             SaveDiagnosticPatches.Apply(_harmony);
 
@@ -207,9 +257,32 @@ public static class ModEntry
             return;
         }
 
+        StartupRecoveryBridge.InitializeAttemptContext();
+        StartupRecoveryBridge.RecordStage("standalone-launcher");
         var launcher = new LauncherUI();
         tree.Root.AddChild(launcher);
-        launcher.Initialize();
+        if (!launcher.Initialize())
+        {
+            PatchHelper.Log("Standalone launcher initialization failed; showing explicit error");
+            LauncherModel.GetGodotApp()?.Call("hideLoadingOverlay");
+            try
+            {
+                OS.Alert(
+                    "The launcher UI could not initialize. Restart the app and attach the launcher log when reporting this issue.",
+                    "Launcher initialization failed"
+                );
+            }
+            catch (Exception ex)
+            {
+                PatchHelper.Log($"Failed to show launcher initialization alert: {ex.Message}");
+            }
+            launcher.QueueFree();
+            return;
+        }
         PatchHelper.Log("Standalone launcher displayed");
+        StartupPerformanceTracker.AdvanceTo(StartupStageId.LauncherReady);
+        StartupPerformanceTracker.EndActive(StartupStageTerminal.Completed);
+        Callable.From(() => LauncherModel.GetGodotApp()?.Call("hideLoadingOverlay")).CallDeferred();
+        StartupRecoveryBridge.MarkHealthy("standalone-ready");
     }
 }

@@ -6,28 +6,33 @@ namespace STS2Mobile.Launcher.Components;
 
 // Watches only the launcher's shared styled controls. Dynamic text assigned by
 // upstream controllers is translated without modifying those high-churn files.
+// Provenance prevents the localization layer from rewriting third-party text.
 internal static class LocalizedTextRegistry
 {
     private static readonly List<WatchedText> Watched = new();
 
-    public static void Watch(Label label)
+    public static void Watch(Label label, TextProvenance provenance)
     {
-        Watch(label, WatchedProperty.Text);
+        Watch(label, WatchedProperty.Text, provenance);
     }
 
-    public static void Watch(Button button)
+    public static void Watch(Button button, TextProvenance provenance)
     {
-        Watch(button, WatchedProperty.Text);
-        Watch(button, WatchedProperty.Tooltip);
+        Watch(button, WatchedProperty.Text, provenance);
+        Watch(button, WatchedProperty.Tooltip, provenance);
     }
 
-    public static void Watch(LineEdit lineEdit)
+    public static void Watch(LineEdit lineEdit, TextProvenance provenance)
     {
-        Watch(lineEdit, WatchedProperty.Placeholder);
+        Watch(lineEdit, WatchedProperty.Placeholder, provenance);
     }
 
-    public static void Refresh(bool useEnglish)
+    public static LocalizationAuditSnapshot Refresh(bool useEnglish)
     {
+        var visibleText = 0;
+        var untranslatedLauncherText = 0;
+        var preservedExternalText = 0;
+
         for (var i = Watched.Count - 1; i >= 0; i--)
         {
             var item = Watched[i];
@@ -38,60 +43,73 @@ internal static class LocalizedTextRegistry
             }
 
             var current = GetText(target, item.Property);
-            if (useEnglish)
+            var rendered = LocalizedTextPolicy.Render(current, useEnglish, item.Provenance);
+            if (rendered != current)
             {
-                if (!EnglishLocalization.ContainsKorean(current))
-                    continue;
-
-                var translated = EnglishLocalization.Translate(current);
-                if (translated == current)
-                    continue;
-
-                item.LastKorean = current;
-                item.LastEnglish = translated;
-                SetText(target, item.Property, translated);
+                if (useEnglish)
+                {
+                    item.LastKorean = current;
+                    item.LastEnglish = rendered;
+                }
+                SetText(target, item.Property, rendered);
+                current = rendered;
             }
             else if (
-                item.LastKorean != null
+                !useEnglish
+                && item.LastKorean != null
                 && item.LastEnglish != null
                 && current == item.LastEnglish
             )
             {
                 SetText(target, item.Property, item.LastKorean);
+                current = item.LastKorean;
             }
-            else
+
+            if (!IsVisibleText(target, current))
+                continue;
+
+            visibleText++;
+            if (useEnglish)
             {
-                var korean = EnglishLocalization.RestoreKorean(current);
-                if (korean != current)
-                    SetText(target, item.Property, korean);
+                if (LocalizedTextPolicy.IsUntranslatedLauncherText(current, item.Provenance))
+                    untranslatedLauncherText++;
+                else if (LocalizedTextPolicy.IsPreservedExternalText(current, item.Provenance))
+                    preservedExternalText++;
             }
         }
+
+        return new LocalizationAuditSnapshot(
+            visibleText,
+            untranslatedLauncherText,
+            preservedExternalText
+        );
     }
 
-    private static void Watch(Control control, WatchedProperty property)
+    private static void Watch(Control control, WatchedProperty property, TextProvenance provenance)
     {
-        var item = new WatchedText(control, property);
+        var item = new WatchedText(control, property, provenance);
         Watched.Add(item);
 
-        if (!Loc.IsEnglish)
-            return;
-
         var current = GetText(control, property);
-        var translated = EnglishLocalization.Translate(current);
-        if (translated == current)
+        var rendered = LocalizedTextPolicy.Render(current, Loc.IsEnglish, provenance);
+        if (rendered == current)
             return;
 
         item.LastKorean = current;
-        item.LastEnglish = translated;
-        SetText(control, property, translated);
+        item.LastEnglish = rendered;
+        SetText(control, property, rendered);
     }
+
+    private static bool IsVisibleText(Control control, string value) =>
+        !string.IsNullOrEmpty(value) && control.IsVisibleInTree();
 
     private static string GetText(Control control, WatchedProperty property) =>
         property switch
         {
             WatchedProperty.Text when control is Label label => label.Text,
             WatchedProperty.Text when control is Button button => button.Text,
-            WatchedProperty.Placeholder when control is LineEdit lineEdit => lineEdit.PlaceholderText,
+            WatchedProperty.Placeholder when control is LineEdit lineEdit =>
+                lineEdit.PlaceholderText,
             WatchedProperty.Tooltip => control.TooltipText,
             _ => "",
         };
@@ -126,13 +144,21 @@ internal static class LocalizedTextRegistry
     {
         public readonly WeakReference<Control> Target;
         public readonly WatchedProperty Property;
+        public readonly TextProvenance Provenance;
         public string LastKorean;
         public string LastEnglish;
 
-        public WatchedText(Control target, WatchedProperty property)
+        public WatchedText(Control target, WatchedProperty property, TextProvenance provenance)
         {
             Target = new WeakReference<Control>(target);
             Property = property;
+            Provenance = provenance;
         }
     }
 }
+
+public readonly record struct LocalizationAuditSnapshot(
+    int VisibleText,
+    int UntranslatedLauncherText,
+    int PreservedExternalText
+);

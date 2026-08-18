@@ -61,7 +61,8 @@ public class BackupResultDialog : ColorRect
                     backupPath,
                     scale,
                     fontSize: 12,
-                    align: HorizontalAlignment.Left
+                    align: HorizontalAlignment.Left,
+                    provenance: TextProvenance.ExternalContent
                 );
                 pathLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
                 pathLabel.CustomMinimumSize = new Vector2((int)(420 * scale), 0);
@@ -73,11 +74,14 @@ public class BackupResultDialog : ColorRect
         else
         {
             var reason = new StyledLabel(
-                string.IsNullOrEmpty(failureReason)
-                    ? "백업 중 오류가 발생했습니다."
-                    : failureReason,
+                Loc.Authored(
+                    string.IsNullOrEmpty(failureReason)
+                        ? "백업 중 오류가 발생했습니다."
+                        : failureReason
+                ),
                 scale,
-                fontSize: 14
+                fontSize: 14,
+                provenance: TextProvenance.LauncherTemplateWithExternalContent
             );
             reason.AutowrapMode = TextServer.AutowrapMode.WordSmart;
             reason.CustomMinimumSize = new Vector2((int)(420 * scale), 0);
@@ -119,7 +123,13 @@ public class BackupResultDialog : ColorRect
         k.SizeFlagsHorizontal = SizeFlags.ExpandFill;
         row.AddChild(k);
 
-        var v = new StyledLabel(value, scale, fontSize: 14, align: HorizontalAlignment.Right);
+        var v = new StyledLabel(
+            value,
+            scale,
+            fontSize: 14,
+            align: HorizontalAlignment.Right,
+            provenance: TextProvenance.ExternalContent
+        );
         row.AddChild(v);
 
         parent.AddChild(row);

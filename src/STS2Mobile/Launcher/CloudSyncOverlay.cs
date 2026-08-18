@@ -18,10 +18,18 @@ public class CloudSyncOverlay : Control
     private Label _statusLabel;
     private Label _detailLabel;
     private StyledProgressBar _progressBar;
+    private bool _inputGateHeld;
 
     public void Initialize()
     {
         ZIndex = 150;
+
+        // LauncherUI is queued for deletion before cloud work starts. Keep raw
+        // Android Back/hotkeys from reaching the not-yet-started game, and keep
+        // SceneTree from auto-quitting while this transition owns the screen.
+        _inputGateHeld = true;
+        StartupInputGate.Enter(this);
+        TreeExiting += ReleaseInputGate;
 
         try
         {
@@ -37,7 +45,11 @@ public class CloudSyncOverlay : Control
             panel.UpdateSizeFromViewport(vpSize);
             AddChild(panel);
 
-            _statusLabel = new StyledLabel("클라우드 상태 확인 중...", _scale, fontSize: 20);
+            _statusLabel = new StyledLabel(
+                Loc.Tr("클라우드 상태 확인 중...", "Checking cloud status..."),
+                _scale,
+                fontSize: 20
+            );
             panel.Content.AddChild(_statusLabel);
 
             _progressBar = new StyledProgressBar(_scale);
@@ -47,7 +59,11 @@ public class CloudSyncOverlay : Control
             _progressBar.Visible = false;
             panel.Content.AddChild(_progressBar);
 
-            _detailLabel = new StyledLabel("잠시만 기다려 주세요", _scale, fontSize: 13);
+            _detailLabel = new StyledLabel(
+                Loc.Tr("잠시만 기다려 주세요", "Please wait"),
+                _scale,
+                fontSize: 13
+            );
             _detailLabel.Modulate = new Color(0.7f, 0.7f, 0.7f);
             panel.Content.AddChild(_detailLabel);
 
@@ -68,11 +84,13 @@ public class CloudSyncOverlay : Control
         Callable
             .From(() =>
             {
-                if (_statusLabel != null)
-                    _statusLabel.Text = status;
-                if (_detailLabel != null)
-                    _detailLabel.Text = detail;
-                if (_progressBar != null)
+                if (!GodotObject.IsInstanceValid(this) || !IsInsideTree())
+                    return;
+                if (IsAlive(_statusLabel))
+                    _statusLabel.Text = Loc.Authored(status);
+                if (IsAlive(_detailLabel))
+                    _detailLabel.Text = Loc.Authored(detail);
+                if (IsAlive(_progressBar))
                     _progressBar.Visible = false;
             })
             .CallDeferred();
@@ -84,19 +102,44 @@ public class CloudSyncOverlay : Control
     // defer the UI mutation onto the main thread.
     public void SetBackupProgress(int done, int total)
     {
+        if (total > 0)
+            StartupPerformanceTracker.ReportProgress(StartupStageId.CloudSync, done, total);
         Callable
             .From(() =>
             {
-                if (_statusLabel != null)
-                    _statusLabel.Text = "클라우드 백업 중";
-                if (_progressBar != null)
+                if (!GodotObject.IsInstanceValid(this) || !IsInsideTree())
+                    return;
+                if (IsAlive(_statusLabel))
+                    _statusLabel.Text = Loc.Tr("클라우드 백업 중", "Backing up to cloud");
+                if (IsAlive(_progressBar))
                 {
                     _progressBar.Visible = true;
                     _progressBar.Value = total > 0 ? (double)done / total * 100 : 0;
                 }
-                if (_detailLabel != null)
+                if (IsAlive(_detailLabel))
                     _detailLabel.Text = total > 0 ? $"{done} / {total}" : $"{done}";
             })
             .CallDeferred();
     }
+
+    public override void _Notification(int what)
+    {
+        if (what == NotificationWMGoBackRequest && _inputGateHeld)
+            StartupInputGate.HandleBack();
+    }
+
+    private void ReleaseInputGate()
+    {
+        if (!_inputGateHeld)
+            return;
+
+        _inputGateHeld = false;
+        StartupInputGate.Exit(this);
+        _statusLabel = null;
+        _detailLabel = null;
+        _progressBar = null;
+    }
+
+    private static bool IsAlive(GodotObject value) =>
+        value != null && GodotObject.IsInstanceValid(value);
 }

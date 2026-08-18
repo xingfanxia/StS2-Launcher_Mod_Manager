@@ -1,0 +1,21 @@
+scenario	status	evidence	notes
+fresh install	pending	-	Must use an authorized signing identity; do not uninstall without approval.
+upgrade with existing cache	pending	-	Preserve app data and record the previous/new version.
+no mods	pending	-	-
+BaseLib only	pending	-	-
+supported ordinary mod	pending	-	Record exact mod versions.
+known incompatible mod	pending	-	Expect bounded diagnostic or safe failure, not permanent black screen.
+online cloud sync	pending	-	-
+offline launch	pending	-	-
+slow or interrupted network	pending	-	-
+cloud conflict	pending	-	Exercise Back/parent teardown as well as explicit buttons.
+first shader warmup	pending	-	Record elapsed time and memory pressure.
+kill during shader warmup	pending	-	Verify next boot avoids a repeated warmup crash loop.
+warm-cache relaunch	pending	-	-
+background and foreground	pending	-	Separate surface teardown from an earlier causal failure.
+rotation or configuration change	pending	-	-
+game update or branch switch	pending	-	Verify stale assembly/PCK detection before launch.
+managed crash then restart	pending	-	Verify prior-exit diagnosis.
+native crash then restart	pending	-	Verify ApplicationExitInfo reason/tombstone boundary.
+ANR then restart	pending	-	Verify bounded ANR trace on the following boot.
+LMK then restart	pending	-	Verify low-memory reason is distinguished from crash.

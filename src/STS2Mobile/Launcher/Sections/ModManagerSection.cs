@@ -165,7 +165,12 @@ public class ModManagerSection : VBoxContainer
         _localPane.AddThemeConstantOverride("separation", (int)(8 * scale));
         AddChild(_localPane);
 
-        _statusLabel = new StyledLabel("", scale, fontSize: 12);
+        _statusLabel = new StyledLabel(
+            "",
+            scale,
+            fontSize: 12,
+            provenance: TextProvenance.LauncherTemplateWithExternalContent
+        );
         _statusLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
         _localPane.AddChild(_statusLabel);
 

@@ -53,7 +53,8 @@ public class SubscribedModRow : PanelContainer
             titleText,
             scale,
             fontSize: 14,
-            align: HorizontalAlignment.Left
+            align: HorizontalAlignment.Left,
+            provenance: TextProvenance.ExternalContent
         );
         titleLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
         if (disabled)
@@ -64,7 +65,8 @@ public class SubscribedModRow : PanelContainer
             status,
             scale,
             fontSize: Ui.FontCaption,
-            align: HorizontalAlignment.Left
+            align: HorizontalAlignment.Left,
+            provenance: TextProvenance.LauncherTemplateWithExternalContent
         );
         statusLabel.AddThemeColorOverride("font_color", statusColor);
         vbox.AddChild(statusLabel);

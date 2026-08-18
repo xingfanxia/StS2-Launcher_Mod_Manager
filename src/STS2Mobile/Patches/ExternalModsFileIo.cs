@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using MegaCrit.Sts2.Core.Modding;
+using STS2Mobile.Launcher;
 using GodotFileAccess = Godot.FileAccess;
 
 namespace STS2Mobile.Patches;
@@ -68,7 +69,10 @@ public class ExternalModsFileIo : IModManagerFileIo
         try
         {
             return Directory.Exists(redirected)
-                ? Directory.GetFiles(redirected)
+                ? Directory
+                    .GetFiles(redirected)
+                    .Where(ModRecoverySession.ShouldExposeFile)
+                    .ToArray()
                 : Array.Empty<string>();
         }
         catch (Exception ex)
@@ -93,6 +97,7 @@ public class ExternalModsFileIo : IModManagerFileIo
             return Directory
                 .EnumerateDirectories(redirected)
                 .Where(d => !System.IO.Path.GetFileName(d).StartsWith("."))
+                .Where(ModRecoverySession.ShouldExposeDirectory)
                 .ToArray();
         }
         catch (Exception ex)
@@ -107,6 +112,8 @@ public class ExternalModsFileIo : IModManagerFileIo
         var redirected = TryRedirect(path);
         if (redirected == null)
             return _inner != null && _inner.FileExists(path);
+        if (!ModRecoverySession.ShouldExposeFile(redirected))
+            return false;
         try
         {
             return File.Exists(redirected);
@@ -122,6 +129,8 @@ public class ExternalModsFileIo : IModManagerFileIo
         var redirected = TryRedirect(path);
         if (redirected == null)
             return _inner != null && _inner.DirectoryExists(path);
+        if (!ModRecoverySession.ShouldExposeDirectory(redirected))
+            return false;
         try
         {
             return Directory.Exists(redirected);
@@ -137,6 +146,8 @@ public class ExternalModsFileIo : IModManagerFileIo
         var redirected = TryRedirect(path);
         if (redirected == null)
             return _inner?.OpenStream(path, mode);
+        if (!ModRecoverySession.ShouldExposeFile(redirected))
+            return null;
 
         // Map Godot ModeFlags to standard FileMode/FileAccess. Godot's flags are
         // Read=1, Write=2, ReadWrite=3, WriteRead=7 — only Read/Write matter for
@@ -227,7 +238,9 @@ public class ExternalModsFileIo : IModManagerFileIo
         }
         catch (Exception ex)
         {
-            PatchHelper.Log($"[Mods] CopyFile({src ?? sourcePath} -> {dst ?? destinationPath}) failed: {ex.Message}");
+            PatchHelper.Log(
+                $"[Mods] CopyFile({src ?? sourcePath} -> {dst ?? destinationPath}) failed: {ex.Message}"
+            );
             return Godot.Error.Failed;
         }
     }

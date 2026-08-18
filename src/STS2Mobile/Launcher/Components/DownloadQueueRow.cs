@@ -21,7 +21,8 @@ public class DownloadQueueRow : PanelContainer
             title,
             scale,
             fontSize: 14,
-            align: HorizontalAlignment.Left
+            align: HorizontalAlignment.Left,
+            provenance: TextProvenance.ExternalContent
         );
         titleLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
         vbox.AddChild(titleLabel);
@@ -38,7 +39,8 @@ public class DownloadQueueRow : PanelContainer
             statusText,
             scale,
             fontSize: 12,
-            align: HorizontalAlignment.Left
+            align: HorizontalAlignment.Left,
+            provenance: TextProvenance.LauncherTemplateWithExternalContent
         );
         statusLabel.AddThemeColorOverride(
             "font_color",

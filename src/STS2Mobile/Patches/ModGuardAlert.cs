@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using Godot;
 using STS2Mobile.Debug;
+using STS2Mobile.Launcher.Components;
 
 namespace STS2Mobile.Patches;
 
@@ -27,6 +28,7 @@ public static class ModGuardAlert
     private static readonly HashSet<string> _alertedMods = new();
     private static System.Threading.Timer _testWatcher;
 
+    private const string QaToolsEnvironmentVariable = "STS2_DEBUG_QA_TOOLS";
     private const string TestTriggerFile = AppPaths.ExternalRoot + "/.modguard_test_alert";
 
     public static void ShowForMod(string modName, string exceptionType)
@@ -41,6 +43,20 @@ public static class ModGuardAlert
 
     public static void StartTestTriggerWatcher()
     {
+        // This watcher is only a QA file trigger; real mod exception attribution
+        // does not depend on it. Avoid a permanent two-second external-storage
+        // poll in every production gameplay process.
+        if (
+            !string.Equals(
+                System.Environment.GetEnvironmentVariable(QaToolsEnvironmentVariable),
+                "1",
+                StringComparison.Ordinal
+            )
+        )
+        {
+            return;
+        }
+
         try
         {
             _testWatcher = new System.Threading.Timer(
@@ -179,23 +195,28 @@ public static class ModGuardAlert
             vbox.AddThemeConstantOverride("separation", 18);
             panel.AddChild(vbox);
 
-            var title = new Label { Text = "모드 오류 감지" };
+            var title = new Label { Text = Loc.Tr("모드 오류 감지", "MOD ERROR DETECTED") };
             title.AddThemeFontSizeOverride("font_size", 34);
             title.AddThemeColorOverride("font_color", new Color(0.95f, 0.6f, 0.45f));
             vbox.AddChild(title);
 
             var body = new Label
             {
-                Text =
+                Text = Loc.Tr(
                     $"'{modName}' 모드에서 오류가 발생했습니다.\n"
-                    + $"({exceptionType})\n\n"
-                    + "게임은 계속 진행할 수 있지만, 문제가 반복되면\n"
-                    + "Mod Hub에서 해당 모드를 비활성화하세요.\n\n"
-                    // issue #76 — the dialog only appears in Debug: ON sessions,
-                    // so it must say how to turn itself off. Users knowingly
-                    // running outdated mods shouldn't have to hunt for it.
-                    + "이 알림을 보고 싶지 않으면\n"
-                    + "런처 화면 우측 상단의 Debug 토글을 OFF 하세요.",
+                        + $"({exceptionType})\n\n"
+                        + "게임은 계속 진행할 수 있지만, 문제가 반복되면\n"
+                        + "Mod Hub에서 해당 모드를 비활성화하세요.\n\n"
+                        // issue #76 — the dialog only appears in Debug: ON sessions,
+                        // so it must say how to turn itself off. Users knowingly
+                        // running outdated mods shouldn't have to hunt for it.
+                        + "이 알림을 보고 싶지 않으면\n"
+                        + "런처 화면 우측 상단의 Debug 토글을 OFF 하세요.",
+                    $"The '{modName}' mod encountered an error.\n"
+                        + $"({exceptionType})\n\n"
+                        + "The game can continue, but disable this mod in Mod Hub if the problem repeats.\n\n"
+                        + "To hide this alert, turn off the Debug toggle in the top-right of the launcher."
+                ),
                 AutowrapMode = TextServer.AutowrapMode.WordSmart,
                 CustomMinimumSize = new Vector2(680, 0),
             };
@@ -203,7 +224,11 @@ public static class ModGuardAlert
             vbox.AddChild(body);
 
             var row = new HBoxContainer { Alignment = BoxContainer.AlignmentMode.End };
-            var ok = new Button { Text = "확인", CustomMinimumSize = new Vector2(220, 68) };
+            var ok = new Button
+            {
+                Text = Loc.Tr("확인", "OK"),
+                CustomMinimumSize = new Vector2(220, 68),
+            };
             ok.AddThemeFontSizeOverride("font_size", 26);
             ok.Pressed += () => layer.QueueFree();
             row.AddChild(ok);

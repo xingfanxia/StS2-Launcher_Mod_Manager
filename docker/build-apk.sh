@@ -24,6 +24,22 @@ require_file "$FMOD_DIR/libfmod.so"
 require_file "$FMOD_DIR/libfmodstudio.so"
 require_file "$FMOD_DIR/libGodotFmod.android.template_release.arm64.so"
 
+# libfmod resolves these Java helpers from JNI_OnLoad. A partial fmod.jar can
+# compile and package successfully, but Android then rejects JNI_OnLoad's FMOD
+# error 28 and the activity crashes before onCreate.
+required_fmod_classes=(
+    org/fmod/AudioDevice.class
+    'org/fmod/FMOD$PluginAudioDeviceCallback.class'
+    'org/fmod/FMOD$PluginBroadcastReceiver.class'
+    org/fmod/FMOD.class
+    org/fmod/MediaCodec.class
+)
+fmod_jar_entries="$(jar tf "$FMOD_DIR/fmod.jar")"
+for class_file in "${required_fmod_classes[@]}"; do
+    grep -Fxq "$class_file" <<<"$fmod_jar_entries" \
+        || fail "Incomplete FMOD Java glue: $class_file is missing from $FMOD_DIR/fmod.jar"
+done
+
 [ ! -e "$WORK_DIR" ] || fail "Work directory already exists: $WORK_DIR"
 mkdir -p "$WORK_DIR" "$OUTPUT_DIR" "$CACHE_DIR/gradle" "$CACHE_DIR/nuget"
 cp -a "$SOURCE_DIR/." "$WORK_DIR/"
@@ -33,6 +49,21 @@ export DEPS_DIR
 export GRADLE_USER_HOME="$CACHE_DIR/gradle"
 export NUGET_PACKAGES="$CACHE_DIR/nuget"
 bash scripts/setup-deps.sh
+
+# A debug-version suffix exposes deterministic QA intents while keeping the
+# exact release build type, optimizer, package id, signing identity, and native
+# payload used by production. The default is empty and therefore byte-for-byte
+# follows the ordinary release version path.
+VERSION_NAME_SUFFIX="${VERSION_NAME_SUFFIX:-}"
+if [ -n "$VERSION_NAME_SUFFIX" ]; then
+    [[ "$VERSION_NAME_SUFFIX" =~ ^-[A-Za-z0-9][A-Za-z0-9.-]*$ ]] \
+        || fail "Invalid VERSION_NAME_SUFFIX: $VERSION_NAME_SUFFIX"
+    base_version="$(sed -nE 's/^export_version_name=(.+)/\1/p' android/gradle.properties)"
+    [ -n "$base_version" ] || fail "export_version_name is missing"
+    sed -i \
+        "s/^export_version_name=.*/export_version_name=${base_version}${VERSION_NAME_SUFFIX}/" \
+        android/gradle.properties
+fi
 
 # setup-deps.sh seeds native libraries from Ekyso's v0.2.0 APK. Releases since
 # v0.4.1 replace the FMOD 2.02 files with a matched FMOD 2.03.13 set.
@@ -71,10 +102,31 @@ if [ ! -f android/gradle/wrapper/gradle-wrapper.jar ]; then
     (cd android && gradle wrapper --gradle-version 8.13 --distribution-type bin)
 fi
 
+echo "Running focused stability and compatibility regressions..."
+dotnet run --project tools/stability-tests/stability-tests.csproj
+bash tools/localization-audit/tests/run.sh
+bash tools/stability-tests-java/run.sh
+bash tools/device-stability/tests/run.sh
+bash tools/device-performance/tests/run.sh
+bash tools/memberref-audit/tests/run.sh
+bash tools/patch-target-audit/tests/run.sh
+
 bash scripts/build.sh --no-bump
+
+# This existing regression project references the freshly built STS2Mobile.dll.
+dotnet run --project tools/workshop-sync-tests/workshop-sync-tests.csproj
 
 apk_path="$(find android/build/outputs/apk/mono/release -maxdepth 1 -type f -name '*.apk' -print -quit)"
 [ -n "$apk_path" ] || fail "Gradle completed without producing an APK"
+
+# Verify the helpers survived dependency merging/shrinking and reached DEX.
+unzip -p "$apk_path" classes.dex > "$WORK_DIR/classes.dex"
+"$ANDROID_HOME/build-tools/35.0.0/dexdump" "$WORK_DIR/classes.dex" > "$WORK_DIR/classes.dump"
+for class_file in "${required_fmod_classes[@]}"; do
+    class_descriptor="L${class_file%.class};"
+    grep -Fq "Class descriptor  : '$class_descriptor'" "$WORK_DIR/classes.dump" \
+        || fail "Packaged APK is missing FMOD Java glue: $class_descriptor"
+done
 
 cp -f "$apk_path" "$OUTPUT_DIR/"
 output_name="$(basename "$apk_path")"

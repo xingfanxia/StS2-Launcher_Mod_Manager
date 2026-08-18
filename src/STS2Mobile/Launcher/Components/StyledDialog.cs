@@ -63,7 +63,12 @@ public class StyledDialog : ColorRect
         vbox.AddChild(scroll);
         TouchScroll.Attach(scroll);
 
-        var label = new StyledLabel(message, scale, fontSize: 16);
+        var label = new StyledLabel(
+            Loc.Authored(message),
+            scale,
+            fontSize: 16,
+            provenance: TextProvenance.LauncherTemplateWithExternalContent
+        );
         label.AutowrapMode = TextServer.AutowrapMode.WordSmart;
         label.CustomMinimumSize = new Vector2((int)(320 * scale), 0);
         label.SizeFlagsHorizontal = SizeFlags.ExpandFill;

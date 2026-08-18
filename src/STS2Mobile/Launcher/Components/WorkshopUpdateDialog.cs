@@ -97,7 +97,8 @@ public class WorkshopUpdateDialog : ColorRect
                 "• " + t,
                 scale,
                 fontSize: 13,
-                align: HorizontalAlignment.Left
+                align: HorizontalAlignment.Left,
+                provenance: TextProvenance.ExternalContent
             );
             row.AutowrapMode = TextServer.AutowrapMode.WordSmart;
             row.SizeFlagsHorizontal = SizeFlags.ExpandFill;

@@ -150,7 +150,8 @@ public class WorkshopDetailPage : ColorRect
             _item.Title ?? "",
             _scale,
             fontSize: Ui.FontTitle,
-            align: HorizontalAlignment.Left
+            align: HorizontalAlignment.Left,
+            provenance: TextProvenance.ExternalContent
         );
         title.SizeFlagsHorizontal = SizeFlags.ExpandFill;
         title.SizeFlagsVertical = SizeFlags.ShrinkCenter;
@@ -267,7 +268,8 @@ public class WorkshopDetailPage : ColorRect
             "",
             _scale,
             fontSize: Ui.FontBody,
-            align: HorizontalAlignment.Left
+            align: HorizontalAlignment.Left,
+            provenance: TextProvenance.LauncherTemplateWithExternalContent
         );
         _descLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;
         _descLabel.SizeFlagsHorizontal = SizeFlags.ExpandFill;
@@ -522,7 +524,9 @@ public class WorkshopDetailPage : ColorRect
         if (_item.Tags != null)
         {
             foreach (var tag in _item.Tags)
-                _tagsFlow.AddChild(Ui.MakePill(tag, _scale, Ui.Accent));
+                _tagsFlow.AddChild(
+                    Ui.MakePill(tag, _scale, Ui.Accent, TextProvenance.ExternalContent)
+                );
         }
 
         var desc = !string.IsNullOrWhiteSpace(_item.FullDescription)
@@ -672,7 +676,8 @@ public class WorkshopDetailPage : ColorRect
                     : CleanBBCode(entry.Description),
                 _scale,
                 fontSize: Ui.FontBody,
-                align: HorizontalAlignment.Left
+                align: HorizontalAlignment.Left,
+                provenance: TextProvenance.LauncherTemplateWithExternalContent
             );
             body.AutowrapMode = TextServer.AutowrapMode.WordSmart;
             body.SizeFlagsHorizontal = SizeFlags.ExpandFill;

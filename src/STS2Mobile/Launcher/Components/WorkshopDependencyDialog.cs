@@ -93,7 +93,8 @@ public class WorkshopDependencyDialog : ColorRect
                 dep.Title,
                 scale,
                 fontSize: 13,
-                align: HorizontalAlignment.Left
+                align: HorizontalAlignment.Left,
+                provenance: TextProvenance.ExternalContent
             );
             nameLabel.SizeFlagsHorizontal = SizeFlags.ExpandFill;
             nameLabel.AutowrapMode = TextServer.AutowrapMode.WordSmart;

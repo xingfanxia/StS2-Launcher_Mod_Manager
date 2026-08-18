@@ -13,15 +13,14 @@ namespace STS2Mobile.Launcher.Components;
 // caller can share its branch logic with ProfilePickerDialog's two extra buttons.
 public class LocalOnlyMenuDialog : ColorRect
 {
-    private readonly TaskCompletionSource<PickerAction> _result = new(
-        TaskCreationOptions.RunContinuationsAsynchronously
-    );
+    private readonly DialogCompletion<PickerAction> _completion = new(PickerAction.None);
 
-    public Task<PickerAction> Result => _result.Task;
+    public Task<PickerAction> Result => _completion.Task;
 
     public LocalOnlyMenuDialog(float scale, float viewportHeight)
     {
         ModalGate.Register(this);
+        TreeExiting += _completion.CompleteFallback;
 
         // Same compact-mode formula as ProfilePickerDialog.ResolveSizing, inlined
         // here since this dialog only needs a handful of values.
@@ -71,7 +70,12 @@ public class LocalOnlyMenuDialog : ColorRect
         copyButton.Pressed += () => Resolve(PickerAction.Copy);
         buttonCol.AddChild(copyButton);
 
-        var restoreButton = new StyledButton("백업 복원", scale, fontSize: btnFs, height: btnHeight);
+        var restoreButton = new StyledButton(
+            "백업 복원",
+            scale,
+            fontSize: btnFs,
+            height: btnHeight
+        );
         restoreButton.Pressed += () => Resolve(PickerAction.Restore);
         buttonCol.AddChild(restoreButton);
 
@@ -91,7 +95,7 @@ public class LocalOnlyMenuDialog : ColorRect
 
     private void Resolve(PickerAction action)
     {
+        _completion.Complete(action);
         QueueFree();
-        _result.TrySetResult(action);
     }
 }

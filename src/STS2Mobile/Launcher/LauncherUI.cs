@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Threading.Tasks;
 using Godot;
+using STS2Mobile.Launcher.Components;
 using STS2Mobile.Patches;
 
 namespace STS2Mobile.Launcher;
@@ -41,9 +42,13 @@ public class LauncherUI : Control
     public const int LogicalHeight = 1080;
     public const float UiScale = LogicalHeight / 540f; // 2.0
 
-    public void Initialize()
+    public bool Initialize()
     {
         ZIndex = 100;
+        // Hook cleanup before touching Window state. A BuildUI failure can occur
+        // after content scale is overridden; the failed node still needs to
+        // restore that state when its caller removes it.
+        TreeExiting += OnExitTree;
 
         // NOTE: an earlier build raised gui/common/default_scroll_deadzone to 30 to
         // arbitrate a card-body tap overlay vs. scrolling. That overlay is gone
@@ -122,23 +127,33 @@ public class LauncherUI : Control
         catch (Exception ex)
         {
             PatchHelper.Log($"BuildUI FAILED: {ex}");
-            return;
+            return false;
         }
 
-        LauncherPatches.CloudSyncEnabled = LauncherModel.LoadCloudSyncPref();
+        try
+        {
+            LauncherPatches.CloudSyncEnabled = LauncherModel.LoadCloudSyncPref();
 
-        // Prevent Android back button from quitting while the launcher is active.
-        GetTree().AutoAcceptQuit = false;
+            // Prevent Android back button from quitting while the launcher is active.
+            var tree =
+                GetTree() ?? throw new InvalidOperationException("Launcher has no SceneTree");
+            tree.AutoAcceptQuit = false;
 
-        GetTree().ProcessFrame += OnProcessFrame;
-        TreeExiting += OnExitTree;
-        LauncherActive = true;
-        _controller.Start();
+            tree.ProcessFrame += OnProcessFrame;
+            LauncherActive = true;
+            _controller.Start();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log($"Launcher startup FAILED: {ex}");
+            return false;
+        }
     }
 
     public void SetGameMode(bool inGameMode) => _inGameMode = inGameMode;
 
-    public Task WaitForLaunch() => _model.WaitForLaunch();
+    public Task<bool> WaitForLaunch() => _model.WaitForLaunch();
 
     // Mirrors the scale formula used in Initialize so other launcher-spawned
     // overlays (e.g. cloud conflict dialog) match the rest of the UI sizing.
@@ -215,7 +230,10 @@ public class LauncherUI : Control
             if (tree != null)
             {
                 tree.ProcessFrame -= OnProcessFrame;
-                tree.AutoAcceptQuit = true;
+                // PLAY may already have installed a cloud/warmup transition guard.
+                // Do not reopen SceneTree auto-quit in the one-frame gap between
+                // this node leaving and that full-screen transition taking over.
+                tree.AutoAcceptQuit = !StartupInputGate.Active;
             }
         }
         catch (Exception ex)

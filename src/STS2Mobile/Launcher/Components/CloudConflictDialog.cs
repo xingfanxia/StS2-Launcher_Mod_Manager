@@ -21,11 +21,11 @@ public enum CloudConflictChoice
 // the launcher can await the user's decision before continuing into the game.
 public class CloudConflictDialog : ColorRect
 {
-    private readonly TaskCompletionSource<CloudConflictChoice> _result = new(
-        TaskCreationOptions.RunContinuationsAsynchronously
+    private readonly DialogCompletion<CloudConflictChoice> _completion = new(
+        CloudConflictChoice.Cancel
     );
 
-    public Task<CloudConflictChoice> Result => _result.Task;
+    public Task<CloudConflictChoice> Result => _completion.Task;
 
     // Single source of logical sizing values, scaled by a continuous viewport-Y
     // density factor. Base values (the constants in ResolveSizing below) are
@@ -111,6 +111,9 @@ public class CloudConflictDialog : ColorRect
         string customTitle = null
     )
     {
+        ModalGate.Register(this);
+        TreeExiting += _completion.CompleteFallback;
+
         local ??= new SaveProgressSummary();
         cloud ??= new SaveProgressSummary();
 
@@ -267,8 +270,8 @@ public class CloudConflictDialog : ColorRect
 
     private void Resolve(CloudConflictChoice choice)
     {
+        _completion.Complete(choice);
         QueueFree();
-        _result.TrySetResult(choice);
     }
 
     // Highlights the recommended button. Slight green tint mirrors the "최근"
