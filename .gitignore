@@ -13,6 +13,8 @@ src/patcher/bin/
 src/patcher/obj/
 src/STS2Mobile/bin/
 src/STS2Mobile/obj/
+tools/stability-tests/bin/
+tools/stability-tests/obj/
 
 # Large binary files
 *.tar.gz

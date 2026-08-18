@@ -10,6 +10,7 @@ internal enum RecoveryAction
     SafeMode,
     ExcludeCandidate,
     BisectFirstHalf,
+    DiagnosticPartition,
     ContinueNormally,
 }
 
@@ -152,20 +153,57 @@ internal sealed class ModRecoveryPlan
 
 internal static class ModRecoveryPolicy
 {
+    public static ModRecoveryPlan BuildPartition(
+        int partitionIndex,
+        int partitionCount,
+        IReadOnlyCollection<RecoveryModDescriptor> source
+    )
+    {
+        var mods = NormalizeMods(source);
+        if (
+            partitionCount < 2
+            || partitionCount > 32
+            || partitionIndex < 0
+            || partitionIndex >= partitionCount
+        )
+            return SafeMode("", mods.Count);
+
+        var groups = GroupModsByDirectory(mods);
+        if (groups.Count == 0)
+            return SafeMode("", 0);
+
+        int start = groups.Count * partitionIndex / partitionCount;
+        int end = groups.Count * (partitionIndex + 1) / partitionCount;
+        if (start >= end)
+            return SafeMode("", mods.Count);
+
+        var selectedDirectories = groups
+            .Skip(start)
+            .Take(end - start)
+            .Select(group => group.Key)
+            .ToHashSet(StringComparer.Ordinal);
+        AddDependencyClosure(mods, selectedDirectories);
+
+        return new ModRecoveryPlan(
+            RecoveryAction.DiagnosticPartition,
+            "",
+            selectedDirectories,
+            filtersMods: true,
+            skipOptionalWarmup: false,
+            selectedModCount: mods.Count(mod =>
+                selectedDirectories.Contains(mod.TopLevelDirectory)
+            ),
+            totalModCount: mods.Count
+        );
+    }
+
     public static ModRecoveryPlan Build(
         RecoveryAction action,
         string candidate,
         IReadOnlyCollection<RecoveryModDescriptor> source
     )
     {
-        var mods = (source ?? Array.Empty<RecoveryModDescriptor>())
-            .Where(mod =>
-                !string.IsNullOrWhiteSpace(mod.Id)
-                && !string.IsNullOrWhiteSpace(mod.TopLevelDirectory)
-            )
-            .OrderBy(mod => mod.Id, StringComparer.Ordinal)
-            .ThenBy(mod => mod.TopLevelDirectory, StringComparer.Ordinal)
-            .ToList();
+        var mods = NormalizeMods(source);
 
         if (action == RecoveryAction.ContinueNormally)
             return ModRecoveryPlan.Normal;
@@ -198,10 +236,7 @@ internal static class ModRecoveryPolicy
             );
         }
 
-        var groups = mods.GroupBy(mod => mod.TopLevelDirectory, StringComparer.Ordinal)
-            .OrderBy(group => group.Min(mod => mod.Id), StringComparer.Ordinal)
-            .ThenBy(group => group.Key, StringComparer.Ordinal)
-            .ToList();
+        var groups = GroupModsByDirectory(mods);
         if (groups.Count == 0)
             return SafeMode(candidate, 0);
 
@@ -234,6 +269,26 @@ internal static class ModRecoveryPolicy
             selectedModCount: 0,
             totalModCount: totalModCount
         );
+
+    private static List<RecoveryModDescriptor> NormalizeMods(
+        IReadOnlyCollection<RecoveryModDescriptor> source
+    ) =>
+        (source ?? Array.Empty<RecoveryModDescriptor>())
+            .Where(mod =>
+                !string.IsNullOrWhiteSpace(mod.Id)
+                && !string.IsNullOrWhiteSpace(mod.TopLevelDirectory)
+            )
+            .OrderBy(mod => mod.Id, StringComparer.Ordinal)
+            .ThenBy(mod => mod.TopLevelDirectory, StringComparer.Ordinal)
+            .ToList();
+
+    private static List<IGrouping<string, RecoveryModDescriptor>> GroupModsByDirectory(
+        IReadOnlyCollection<RecoveryModDescriptor> mods
+    ) =>
+        mods.GroupBy(mod => mod.TopLevelDirectory, StringComparer.Ordinal)
+            .OrderBy(group => group.Min(mod => mod.Id), StringComparer.Ordinal)
+            .ThenBy(group => group.Key, StringComparer.Ordinal)
+            .ToList();
 
     private static void AddDependencyClosure(
         IReadOnlyCollection<RecoveryModDescriptor> mods,

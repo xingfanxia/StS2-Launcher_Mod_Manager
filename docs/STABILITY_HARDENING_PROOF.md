@@ -9,7 +9,7 @@ pinned production APK build, and the physical-device matrix.
 - Baseline commit: `f558761` (first-round stability proof is at parent
   `0525165`).
 - Existing signed reference APK:
-  `~/Library/Caches/StS2LauncherBuildDeps/full/out-goal-signed16/StS2Launcher-v0.4.2.apk`
+  `<private-cache>/out-goal-signed16/StS2Launcher-v0.4.2.apk`
 - Reference SHA-256:
   `0f49e908a1e5923987a759f466eb98d8e6745e61ebb6bb7e8c2a63301c35afaa`
 - Baseline focused checks passed on 2026-08-16:

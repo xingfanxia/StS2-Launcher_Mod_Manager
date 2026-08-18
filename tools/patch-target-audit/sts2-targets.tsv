@@ -23,6 +23,7 @@ required	method	MegaCrit.Sts2.Core.Models.ModelDb	GetId	1	-
 required	field	MegaCrit.Sts2.Core.Models.ModelDb	_contentById	-	-
 optional	method	MegaCrit.Sts2.Core.Nodes.NGame	Quit	bare	-
 optional	method	MegaCrit.Sts2.Core.Nodes.NGame	OnWindowChange	bare	-
+optional	method	MegaCrit.Sts2.Core.Nodes.NGame	LaunchMainMenu	1	-
 optional	method	MegaCrit.Sts2.Core.Saves.CloudSaveStore	WriteFile	2	-
 optional	method	MegaCrit.Sts2.Core.Saves.Managers.ProgressSaveManager	LoadProgress	bare	-
 optional	il-call	MegaCrit.Sts2.Core.Saves.Managers.ProgressSaveManager	LoadProgress	0	MegaCrit.Sts2.Core.Saves.Migrations.MigrationManager::LoadSave
@@ -32,6 +33,11 @@ optional	method	MegaCrit.Sts2.Core.Nodes.NBackgroundModeHandler	ExitBackgroundMo
 optional	method	MegaCrit.Sts2.Core.Nodes.Screens.NRewardsScreen	AfterOverlayClosed	bare	-
 optional	method	MegaCrit.Sts2.Core.Nodes.Rooms.NCombatRoom	SetUpBackground	bare	-
 optional	method	MegaCrit.Sts2.Core.Nodes.Rooms.NCombatRoom	_Ready	bare	-
+optional	method	MegaCrit.Sts2.Core.Nodes.NGame	LoadRun	2	-
+optional	method	MegaCrit.Sts2.Core.Rooms.CombatRoom	StartCombat	1	-
+optional	method	MegaCrit.Sts2.Core.Nodes.Screens.NDeckViewScreen	ShowScreen	1	-
+optional	method	MegaCrit.Sts2.Core.Nodes.Screens.NDeckViewScreen	AfterCapstoneClosed	0	-
+optional	method	MegaCrit.Sts2.Core.Nodes.Screens.NDeckViewScreen	OnPileContentsChanged	0	-
 optional	method	MegaCrit.Sts2.Core.Nodes.CommonUi.NInputManager	OnControllerTypeChanged	bare	-
 optional	field	MegaCrit.Sts2.Core.Nodes.CommonUi.NInputManager	_controllerInputMap	-	-
 optional	method	MegaCrit.Sts2.Core.Nodes.Screens.MainMenu.NEarlyAccessDisclaimer	_Ready	bare	-

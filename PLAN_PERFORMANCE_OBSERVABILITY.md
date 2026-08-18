@@ -6,7 +6,17 @@ contract，最后只优化有 owner 证据的 critical path/spike。稳定性 ba
 
 ## Phase 0 — Reproducible baseline and trustworthy metrics
 
-Status: pending
+Status: complete — canonical frame metric and focused real-game baseline are
+implemented. A dedicated physical-device harness now arms only debug probes,
+refuses low-battery/release builds before mutation, and emits numeric-only
+frame/RSS/thermal TSV. Its game A/B uses one debug APK with identical
+instrumentation and a process-local switch that disables only the gameplay
+performance fixes. The no-mod idle-combat and deterministic deck-cycle paths
+now each have 3×120-second paired evidence. Three thermal-valid supported-mod
+pairs and two independent 30-pair startup series are retained. The interleaved
+runner itself is implemented and host-proven: it validates package/signers,
+refuses locked devices, alternates arm order, restores candidate on failure,
+and directly emits nearest-rank boundary/stage percentiles plus acceptance gates.
 
 1. 固定 reference device、public branch、Vulkan、分辨率/刷新率、语言和三组 mod
    配置；记录 thermal/battery/scheduler 条件，不记录设备序列号、账户或 mod 名。
@@ -30,7 +40,13 @@ Commit boundary: metric validation + sanitized baseline harness/proof。
 
 ## Phase 1 — Startup stage contract and low-overhead observability
 
-Status: pending
+Status: complete for the implementation/overhead gate — the independent closed
+catalog, bounded monotonic native and managed timelines, numeric-only
+persistence boundary, sparse progress, and
+deterministic path/privacy tests are implemented. A reference-device normal
+PLAY path closes at `game-ready` with visible settings/game/mod transitions;
+3x120-second instrumentation persistence on/off CPU/RSS/frame A/B stays inside
+the 3% gate, and exit retention has deterministic coverage.
 
 1. 建立独立的 performance stage catalog，不改变 crash-recovery journal 的语义。
    每个 stage 定义 owner、start、`completed/skipped/degraded/failed/recovery` 终态、
@@ -55,7 +71,15 @@ Commit boundary: stage catalog + sparse telemetry + focused tests。
 
 ## Phase 2 — Truthful KR/EN startup progress UI
 
-Status: pending
+Status: complete on the reference device — the native splash-to-overlay handoff and PLAY-to-game
+overlay use KR/EN stage copy, completed-stage markers, elapsed time, truthful
+work units, and watchdog copy. The reference-device EN fast path proved that
+the Android UI-thread surface keeps its stage plus separate stage/total clocks
+moving while Godot's engine thread is occupied, and remains until a rendered
+Godot game frame replaces it. Real EN/KR normal, watchdog, renderer-recovery,
+and managed-recovery paths plus rotated EN layout pass. A release-inert, one-shot,
+20-second maximum debug hold now makes the 15-second game-settings watchdog
+visually reproducible without running the 156-second high-memory shader path.
 
 1. Android native loading surface 显示 native stage，并在 Godot UI 可用后无闪黑地交接
    到统一 startup overlay；launcher 正常可交互页面不被无意义遮挡。
@@ -79,7 +103,18 @@ Commit boundary: native/Godot progress handoff + localized stage UI tests。
 
 ## Phase 3 — Startup critical-path optimization
 
-Status: pending
+Status: complete — a first 30-run
+candidate exposed previous-exit I/O serialized after Godot bootstrap. The query
+now overlaps bootstrap behind an exact-once
+Activity-ready gate. A later interleaved series falsified the apparent 11%
+gain and localized a second root cause: the launcher progress surface completely
+covered a roughly nine-second logo path. A scoped, fail-open prefix now selects
+the game's existing no-logo path only during that covered startup and never
+mutates the user's setting. The Goal baseline→exact-final 30-pair series passes:
+total p50 `38.061 → 28.797 s` (-24.34%), p95 `38.695 → 29.702 s`
+(-23.24%), and 60/60 `game-ready`. Under injected memory
+pressure warmup deferred in 3 ms, performed a planned restart, and the 300-second
+on-demand capture changed long-frame density by +5.05% with no >100 ms frame.
 
 1. 从 paired baseline 的 critical path 逐一排序 Android file work、managed bootstrap、
    launcher construction、cloud cache、warmup、settings/game startup 和 mod load；一次
@@ -104,7 +139,33 @@ Commit boundary: one commit per measured startup root cause。
 
 ## Phase 4 — Runtime jank and frame-pacing fixes
 
-Status: pending
+Status: complete on the reference device — focused evidence identified main-thread scene/card-grid
+and Canvas-pipeline spike owners; frame pacing, real-hand covering, one
+run-tree-owned same-player deck-screen reuse, and upstream pause-cache priming
+are implemented. A hidden cached deck is invalidated before the upstream pile
+event can rebuild its full card grid; card upgrades use their separate upstream
+notification and all subscriptions detach on invalidation or tree teardown.
+The reversible obtain/remove/upgrade/downgrade device proof, next-open node
+reconstruction, frame-time and cleanup gates pass on the reference device.
+The first-map path is also traced but intentionally unchanged because synthetic
+pre-open mutates combat, input, signal, audio, and one-time animation state.
+Same-device 3×120 s no-mod idle, deck-cycle, and supported-mod A/B now pass.
+The paired A/B is defined as alternating `game-baseline-120` and `game-120`
+inside the same signed debug APK, so build and probe overhead are held constant.
+A one-command settled-main-menu prescreen is now device-proven for full, Safe
+Mode, and anonymous numeric mod partitions. It standardizes launch, capture,
+sanitization, load-error classification, and TSV aggregation; it is only a fast
+triage gate and does not replace the real-combat matrix. The same runner now
+accepts combat-only `baseline,optimized` scenarios and preserves their order for
+unattended same-APK repetitions. It also composes the same performance switch
+with session-only Safe Mode as `baseline-safe,optimized-safe`, rejects Android
+thermal status above 2 before device mutation, invalidates hotter results, and
+force-stops every capture-owned process on success or failure. Its bounded
+`deck-cycle` waits for the real interaction marker, then performs exactly five
+open/close cycles so the deck-cache owner is measured rather than diluted by
+an idle-combat window. Across three paired Safe Mode runs this reduced the
+median >2× frame count from 12 to 9 (-25%), >50 ms frames from 6 to 4, and
+>100 ms frames from 3 to 0 without p95/p99 or RSS regression.
 
 1. 对每个 spike cluster 将 trace 与 Godot main thread、render/GPU queue、shader compile、
    GC/allocation、file/network I/O、mod initializer 和 Android scheduler/thermal 对齐。
@@ -128,7 +189,13 @@ Commit boundary: one commit per measured jank root cause。
 
 ## Phase 5 — Final signed APK, device matrix, and proof
 
-Status: pending
+Status: complete on the reference device — the final source passes the pinned
+signed APK pipeline, prior-signer upgrade installation, compatibility and
+localization audits, reversible hidden-deck mutation proof, both 30-pair startup
+matrices, supported-mod pairs, KR/EN degraded/recovery traversal, warmup,
+offline/reconnect, HOME/resume, and rotation. The final signed `0.4.2` APK is
+installed, uses the unchanged signer/package/Vulkan defaults, and has SHA-256
+`3bd7c050ff15f3e2df7bfa9155695640e7d8bcc4a5fb8d6dd32389147767aa4e`.
 
 1. 对 final diff 运行 pinned Docker APK pipeline、MemberRef/interface、patch-target、
    localization、Java/Gradle/FMOD/signing 和全部 performance/stability tests。
@@ -140,7 +207,7 @@ Status: pending
    path、APK SHA-256、instrumentation overhead、外部 residual 和 upstream conflict
    review；raw evidence 留在仓库外。
 5. 运行 `git diff --check`、formatter、secret/private-artifact scan，形成 PR-ready
-   本地 commits；不 push、开 PR、merge、release 或上传。
+   本地 diff；未经单独授权不 commit、push、开 PR、merge、release 或上传。
 
 Final gate:
 

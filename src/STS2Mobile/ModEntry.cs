@@ -14,6 +14,8 @@ namespace STS2Mobile;
 // patches, and falls back to standalone launcher mode if game files aren't present.
 public static class ModEntry
 {
+    private const string GameplayPerformanceDisableEnvironmentVariable =
+        "STS2_DISABLE_GAMEPLAY_PERFORMANCE_FIXES";
     private static Harmony _harmony;
     private static bool _applied = false;
 
@@ -133,6 +135,7 @@ public static class ModEntry
         // in-game alert. All game-independent, all fail-safe (errors degrade
         // to current behavior, invisible to users without gated mods).
         ModAssemblyRegistry.Install();
+        QuickRestartPerformanceCompatPatches.Install(_harmony);
         ModPlatformSpoofPatches.Apply(_harmony);
         ModExceptionAttributionPatches.Apply(_harmony);
         ModGuardAlert.StartTestTriggerWatcher();
@@ -179,13 +182,32 @@ public static class ModEntry
             EarlyAccessDisclaimerPatches.Apply(_harmony);
             FeedbackScreenPatches.Apply(_harmony);
             CombatBackgroundPatches.Apply(_harmony);
+            bool disableGameplayPerformanceFixes = string.Equals(
+                System.Environment.GetEnvironmentVariable(
+                    GameplayPerformanceDisableEnvironmentVariable
+                ),
+                "1",
+                StringComparison.Ordinal
+            );
+            if (disableGameplayPerformanceFixes)
+            {
+                PatchHelper.Log("[FrameProbe] gameplay performance fixes disabled for baseline");
+            }
+            else
+            {
+                GameLoadFramePacingPatches.Apply(_harmony);
+                DeckViewPerformancePatches.Apply(_harmony);
+            }
+            DebugTransitionTimingPatches.Apply(_harmony);
             LanMultiplayerPatcher.Apply(_harmony);
             ModLoaderPatches.Apply(_harmony);
+            DebugModLoadTimingPatches.Apply(_harmony);
             // issue #78: mod FMOD banks live in pcks on external storage, which the
             // GDExtension's FMOD file thread can't open (game banks are app-internal).
             // Copy each loaded mod's bank(s) into app-internal storage and load them
             // ourselves once every mod pck is mounted.
             FmodBankPatches.Apply(_harmony);
+            CoveredStartupLogoPatches.Apply(_harmony);
             LauncherPatches.Apply(_harmony);
             SaveDiagnosticPatches.Apply(_harmony);
 
@@ -258,6 +280,9 @@ public static class ModEntry
             return;
         }
         PatchHelper.Log("Standalone launcher displayed");
+        StartupPerformanceTracker.AdvanceTo(StartupStageId.LauncherReady);
+        StartupPerformanceTracker.EndActive(StartupStageTerminal.Completed);
+        Callable.From(() => LauncherModel.GetGodotApp()?.Call("hideLoadingOverlay")).CallDeferred();
         StartupRecoveryBridge.MarkHealthy("standalone-ready");
     }
 }

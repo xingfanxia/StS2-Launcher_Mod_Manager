@@ -102,6 +102,8 @@ public class CloudSyncOverlay : Control
     // defer the UI mutation onto the main thread.
     public void SetBackupProgress(int done, int total)
     {
+        if (total > 0)
+            StartupPerformanceTracker.ReportProgress(StartupStageId.CloudSync, done, total);
         Callable
             .From(() =>
             {

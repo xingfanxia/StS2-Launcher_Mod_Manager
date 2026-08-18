@@ -192,10 +192,14 @@ public static class LauncherPatches
             if (tree != null)
                 await launcher.ToSignal(tree, SceneTree.SignalName.ProcessFrame);
             StartupRecoveryBridge.RecordStage("launcher-ready");
+            StartupPerformanceTracker.AdvanceTo(StartupStageId.LauncherReady);
+            DebugFrameTimeProbe.TryStart(gameNode, "launcher-ready");
             // The native atlas-rebuild overlay swallows touches, so release it
             // before waiting for the user's PLAY input.
             LauncherModel.GetGodotApp()?.Call("hideLoadingOverlay");
             await StartupRecoveryFlow.ResolveRecoveryAsync(launcher);
+            StartupPerformanceTracker.AdvanceTo(StartupStageId.UserWait);
+            PatchHelper.Log("Launcher ready for PLAY");
             if (await launcher.WaitForLaunch())
             {
                 userLaunched = true;
@@ -210,12 +214,16 @@ public static class LauncherPatches
         else
         {
             StartupRecoveryBridge.RecordStage("launcher-bypass");
-            LauncherModel.GetGodotApp()?.Call("hideLoadingOverlay");
             // The launcher is optional once valid game files are already loaded.
             // A half-initialized UI cannot produce PLAY, so fail open to the game
             // instead of leaving a blank Control or faulting on a null model.
             PatchHelper.Log("Launcher initialization failed; bypassing launcher for this boot");
+            StartupPerformanceTracker.AdvanceTo(
+                StartupStageId.LauncherReady,
+                StartupStageTerminal.Degraded
+            );
             await StartupRecoveryFlow.ResolveRecoveryAsync(gameNode, allowChoice: false);
+            StartupPerformanceTracker.EndActive(StartupStageTerminal.Degraded);
         }
         if (!userLaunched)
         {
@@ -249,6 +257,21 @@ public static class LauncherPatches
         launcher.MarkPlannedTeardown();
         launcher.QueueFree();
 
+        var startupProgressOverlay = new StartupProgressOverlay();
+        gameNode.AddChild(startupProgressOverlay);
+        bool startupProgressCoversGameStartup = false;
+        try
+        {
+            startupProgressOverlay.Initialize();
+            startupProgressCoversGameStartup = true;
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log($"[StartupPerformance] managed overlay degraded: {ex.GetType().Name}");
+            startupProgressOverlay.QueueFree();
+        }
+        LauncherModel.GetGodotApp()?.Call("hideLoadingOverlay");
+
         // Issue #53 — cover the launcher→game gap with a status overlay. The cloud
         // handshake + conflict backup + sync apply below can take 1~2 min with nothing
         // else on screen; without this the black screen reads as a crash and users kill
@@ -259,6 +282,7 @@ public static class LauncherPatches
         if (cloudSyncWillRun)
         {
             StartupRecoveryBridge.RecordStage("cloud-sync");
+            StartupPerformanceTracker.AdvanceTo(StartupStageId.CloudSync);
             overlay = new CloudSyncOverlay();
             gameNode.AddChild(overlay);
             overlay.Initialize();
@@ -304,6 +328,7 @@ public static class LauncherPatches
         }
         else
         {
+            StartupPerformanceTracker.CompleteAndSkip(StartupStageId.CloudSync);
             PatchHelper.Log("[Cloud] Skipping cloud preload (sync disabled or no credentials)");
         }
 
@@ -311,14 +336,26 @@ public static class LauncherPatches
         // has its own full-screen UI).
         overlay?.QueueFree();
 
-        if (!ModRecoverySession.Current.SkipOptionalWarmup && ShaderWarmupScreen.NeedsWarmup())
+        var cloudTerminal =
+            cloudSyncWillRun && !_cloudCacheReady
+                ? StartupStageTerminal.Degraded
+                : StartupStageTerminal.Completed;
+        bool warmupWillRun =
+            !ModRecoverySession.Current.SkipOptionalWarmup && ShaderWarmupScreen.NeedsWarmup();
+        var warmupTerminal = StartupStageTerminal.Completed;
+        if (warmupWillRun)
         {
             StartupRecoveryBridge.RecordStage("shader-warmup");
+            StartupPerformanceTracker.AdvanceTo(StartupStageId.ShaderWarmup, cloudTerminal);
             var warmup = new ShaderWarmupScreen();
             gameNode.AddChild(warmup);
             var completion = warmup.WaitForCompletion();
             warmup.Initialize();
             bool restartRequired = await completion;
+            warmupTerminal =
+                warmup.Outcome == ShaderWarmupOutcome.Completed
+                    ? StartupStageTerminal.Completed
+                    : StartupStageTerminal.Degraded;
             warmup.QueueFree();
 
             if (restartRequired)
@@ -344,24 +381,63 @@ public static class LauncherPatches
                 }
             }
         }
+        else
+        {
+            StartupPerformanceTracker.CompleteAndSkip(StartupStageId.ShaderWarmup, cloudTerminal);
+        }
 
         StartupRecoveryBridge.RecordStage("game-startup");
+        StartupPerformanceTracker.AdvanceTo(StartupStageId.GameSettings, warmupTerminal);
+        // From here through GameStartup, game and mod initialization can occupy
+        // Godot's engine thread for many seconds. Hand the same tracker snapshot
+        // to Android before entering that synchronous span so visible progress
+        // does not depend on SceneTree._Process remaining available.
+        startupProgressOverlay.BeginMainThreadHandoff();
+        await ApplyDebugStartupStageDelayAsync();
         SaveManager.Instance.InitSettingsData();
+        StartupPerformanceTracker.AdvanceTo(StartupStageId.GameStartup);
 
         var gameStartup = game.GetType()
             .GetMethod("GameStartup", BindingFlags.NonPublic | BindingFlags.Instance);
 
         try
         {
-            await (Task)gameStartup.Invoke(game, null);
+            using (CoveredStartupLogoPolicy.Enter(startupProgressCoversGameStartup))
+                await (Task)gameStartup.Invoke(game, null);
             StartupRecoveryBridge.MarkHealthy("game-ready");
+            StartupPerformanceTracker.MarkGameReady();
+            if (GodotObject.IsInstanceValid(startupProgressOverlay))
+                startupProgressOverlay.Visible = false;
+            var gameTree = gameNode.GetTree();
+            if (gameTree != null)
+                await gameNode.ToSignal(gameTree, SceneTree.SignalName.ProcessFrame);
+            startupProgressOverlay.EndMainThreadHandoff();
+            if (GodotObject.IsInstanceValid(startupProgressOverlay))
+                startupProgressOverlay.QueueFree();
+            DebugFrameTimeProbe.TryStart(gameNode, "game-ready");
             await StartupRecoveryFlow.ShowRecoverySuccessAsync(gameNode);
         }
         catch (TargetInvocationException ex)
         {
+            StartupPerformanceTracker.EndActive(StartupStageTerminal.Failed);
+            startupProgressOverlay.EndMainThreadHandoff();
             PatchHelper.Log($"Game startup failed: {ex.InnerException?.Message}");
             throw ex.InnerException ?? ex;
         }
+    }
+
+    private static async Task ApplyDebugStartupStageDelayAsync()
+    {
+        var app = LauncherModel.GetGodotApp();
+        if (app == null)
+            return;
+
+        int seconds = (int)app.Call("consumeDebugStartupStageDelaySeconds");
+        if (seconds <= 0 || seconds > 20)
+            return;
+
+        PatchHelper.Log($"[StartupPerformance/Debug] holding game-settings seconds={seconds}");
+        await Task.Delay(TimeSpan.FromSeconds(seconds));
     }
 
     // Public entry point used by the Save Manager launcher button. Lists every

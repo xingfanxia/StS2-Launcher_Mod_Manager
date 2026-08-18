@@ -44,8 +44,9 @@ restores both rotation settings on exit. It never installs/uninstalls, clears
 app data, changes the network, or edits app-private files.
 
 The output is a versioned TSV containing only scenario/iteration, terminal
-state, bounded startup attempt/stage tokens, PID continuity (yes/no), elapsed
-time, system exit classification, recovery-pending state, and counts of
+state, bounded startup attempt/stage tokens, PID continuity (yes/no), split
+process→launcher, user-wait, PLAY→game-ready and total elapsed time, numeric
+temperature/thermal status, system exit classification, recovery-pending state, and counts of
 fatal/ANR/LMK/surface-error lines. It deliberately does not save raw logcat,
 actual PIDs, the device serial, UI dumps, account text, mod names, or paths.
 
@@ -69,6 +70,13 @@ when the same process reaches the app-authored `game-ready` terminal stage.
 The optional game-confirm coordinate handles a game-owned first-run dialog: it
 is tapped only if `game-ready` has not appeared after the configured grace
 period, and is skipped on normal launches that already reached the terminal.
+
+The matrix rejects Android thermal status above 2 before mutation and waits up
+to ten minutes for the device to cool between repetitions. Each cold-start row
+force-stops its capture-owned process after collecting evidence, including on
+teardown, so the finished game cannot keep heating the reference device. A row
+that ends beyond the configured thermal ceiling is retained as
+`thermal-invalid`, not counted as performance proof.
 
 `audit-screenshot.swift` performs content-free OCR checks. It reports only line
 counts, Hangul/edge-clipping counts, and (when explicitly requested) normalized

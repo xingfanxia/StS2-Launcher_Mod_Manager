@@ -203,6 +203,45 @@ void AuditCSharp(string path)
     var handledSpans = new List<TextSpan>();
     foreach (var invocation in root.DescendantNodes().OfType<InvocationExpressionSyntax>())
     {
+        if (
+            relative.EndsWith("/StartupPerformanceStage.cs", StringComparison.Ordinal)
+            && invocation.Expression.ToString() == "Stage"
+            && invocation.ArgumentList.Arguments.Count >= 11
+        )
+        {
+            var stageArguments = invocation.ArgumentList.Arguments;
+            foreach (var (koreanIndex, englishIndex) in new[] { (2, 3), (4, 5) })
+            {
+                var koreanArgument = stageArguments[koreanIndex];
+                var englishArgument = stageArguments[englishIndex];
+                var stageKorean = SampleExpression(koreanArgument.Expression);
+                var stageEnglish = SampleExpression(englishArgument.Expression);
+                if (
+                    !ContainsHangul(stageKorean)
+                    || ContainsHangul(stageEnglish)
+                    || string.IsNullOrWhiteSpace(stageEnglish)
+                )
+                {
+                    failures.Add(
+                        $"{relative}:{Line(tree, invocation.SpanStart)} invalid startup-stage Korean/English pair"
+                    );
+                }
+                else
+                {
+                    Add(
+                        relative,
+                        tree,
+                        koreanArgument.SpanStart,
+                        "ui-stage-catalog",
+                        stageKorean
+                    );
+                }
+                handledSpans.Add(koreanArgument.Span);
+                handledSpans.Add(englishArgument.Span);
+            }
+            continue;
+        }
+
         if (!IsLocTr(invocation))
             continue;
         var arguments = invocation.ArgumentList.Arguments;

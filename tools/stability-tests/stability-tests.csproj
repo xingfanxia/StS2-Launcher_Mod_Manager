@@ -34,5 +34,25 @@
       Include="../../src/STS2Mobile/Launcher/GameInstallFaultInjector.cs"
       Link="GameInstallFaultInjector.cs"
     />
+    <Compile
+      Include="../../src/STS2Mobile/Launcher/FrameTimeSummary.cs"
+      Link="FrameTimeSummary.cs"
+    />
+    <Compile
+      Include="../../src/STS2Mobile/Launcher/StartupPerformanceStage.cs"
+      Link="StartupPerformanceStage.cs"
+    />
+    <Compile
+      Include="../../src/STS2Mobile/Launcher/StartupPerformanceTimeline.cs"
+      Link="StartupPerformanceTimeline.cs"
+    />
+    <Compile
+      Include="../../src/STS2Mobile/Launcher/CoveredStartupLogoPolicy.cs"
+      Link="CoveredStartupLogoPolicy.cs"
+    />
+    <Compile
+      Include="../../src/STS2Mobile/Launcher/QuickRestartPerformancePolicy.cs"
+      Link="QuickRestartPerformancePolicy.cs"
+    />
   </ItemGroup>
 </Project>

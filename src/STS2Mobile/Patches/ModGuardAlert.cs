@@ -28,6 +28,7 @@ public static class ModGuardAlert
     private static readonly HashSet<string> _alertedMods = new();
     private static System.Threading.Timer _testWatcher;
 
+    private const string QaToolsEnvironmentVariable = "STS2_DEBUG_QA_TOOLS";
     private const string TestTriggerFile = AppPaths.ExternalRoot + "/.modguard_test_alert";
 
     public static void ShowForMod(string modName, string exceptionType)
@@ -42,6 +43,20 @@ public static class ModGuardAlert
 
     public static void StartTestTriggerWatcher()
     {
+        // This watcher is only a QA file trigger; real mod exception attribution
+        // does not depend on it. Avoid a permanent two-second external-storage
+        // poll in every production gameplay process.
+        if (
+            !string.Equals(
+                System.Environment.GetEnvironmentVariable(QaToolsEnvironmentVariable),
+                "1",
+                StringComparison.Ordinal
+            )
+        )
+        {
+            return;
+        }
+
         try
         {
             _testWatcher = new System.Threading.Timer(

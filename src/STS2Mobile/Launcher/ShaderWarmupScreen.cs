@@ -22,6 +22,9 @@ public class ShaderWarmupScreen : Control
     private Label _detailLabel;
     private ProgressBar _progressBar;
     private bool _inputGateHeld;
+    private bool _completed;
+
+    internal ShaderWarmupOutcome Outcome { get; private set; } = ShaderWarmupOutcome.Completed;
 
     public static bool NeedsWarmup()
     {
@@ -66,6 +69,8 @@ public class ShaderWarmupScreen : Control
         }
         catch (Exception ex)
         {
+            Outcome = ShaderWarmupOutcome.FailedButBypassed;
+            _completed = true;
             PatchHelper.Log($"[ShaderWarmup] Initialization failed: {ex}");
             _operation.Complete(restartRequired: false);
             return;
@@ -82,6 +87,8 @@ public class ShaderWarmupScreen : Control
 
     private void OnTreeExiting()
     {
+        if (!_completed)
+            Outcome = ShaderWarmupOutcome.Interrupted;
         _operation.Complete(restartRequired: false);
         if (!_inputGateHeld)
             return;
@@ -104,17 +111,26 @@ public class ShaderWarmupScreen : Control
         panel.UpdateSizeFromViewport(vpSize);
         AddChild(panel);
 
-        _statusLabel = new StyledLabel("Compiling shaders...", _scale, fontSize: 20);
+        _statusLabel = new StyledLabel(
+            Loc.Tr("셰이더 컴파일 중…", "Compiling shaders…"),
+            _scale,
+            fontSize: 20
+        );
         panel.Content.AddChild(_statusLabel);
 
         _progressBar = new StyledProgressBar(_scale);
         _progressBar.MinValue = 0;
-        _progressBar.MaxValue = 100;
+        _progressBar.MaxValue = 1;
         _progressBar.Value = 0;
         _progressBar.ShowPercentage = true;
+        _progressBar.Visible = false;
         panel.Content.AddChild(_progressBar);
 
-        _detailLabel = new StyledLabel("Enumerating resources...", _scale, fontSize: 12);
+        _detailLabel = new StyledLabel(
+            Loc.Tr("리소스 목록 확인 중…", "Enumerating resources…"),
+            _scale,
+            fontSize: 12
+        );
         _detailLabel.Modulate = new Color(0.7f, 0.7f, 0.7f);
         panel.Content.AddChild(_detailLabel);
     }
@@ -131,7 +147,7 @@ public class ShaderWarmupScreen : Control
         try
         {
             ThrowIfWarmupShouldDefer();
-            _statusLabel.Text = "Scanning for shaders...";
+            _statusLabel.Text = Loc.Tr("셰이더 검색 중…", "Scanning for shaders…");
             await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
 
             // Enumerating paths is cheap. Loading the referenced resources is not:
@@ -149,7 +165,7 @@ public class ShaderWarmupScreen : Control
                 $"[ShaderWarmup] Found {looseResourcePaths.Count} loose material resources "
                     + $"and {scenePaths.Count} scenes to stream"
             );
-            _statusLabel.Text = "Compiling shaders...";
+            _statusLabel.Text = Loc.Tr("셰이더 컴파일 중…", "Compiling shaders…");
 
             viewport = new SubViewport();
             viewport.Size = new Vector2I(64, 64);
@@ -269,10 +285,11 @@ public class ShaderWarmupScreen : Control
             viewport = null;
             await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
 
-            _progressBar.Value = 100;
-            _statusLabel.Text = "Done!";
-            _detailLabel.Text =
-                $"Compiled {seenShaderKeys.Count} shaders in {sw.ElapsedMilliseconds}ms";
+            _progressBar.Value = _progressBar.MaxValue;
+            _statusLabel.Text = Loc.Tr("완료", "Done");
+            var completionKo = $"셰이더 {seenShaderKeys.Count}개 · {sw.ElapsedMilliseconds}ms";
+            var completionEn = $"{seenShaderKeys.Count} shaders · {sw.ElapsedMilliseconds}ms";
+            _detailLabel.Text = Loc.IsKo ? completionKo : completionEn;
             PatchHelper.Log(
                 $"[ShaderWarmup] Completed: {seenShaderKeys.Count} streamed materials "
                     + $"in {sw.ElapsedMilliseconds}ms"
@@ -284,8 +301,14 @@ public class ShaderWarmupScreen : Control
         {
             outcome = ShaderWarmupOutcome.DeferredMemoryPressure;
             outcomeReason = ex.Message;
-            _statusLabel.Text = "Continuing with on-demand shaders...";
-            _detailLabel.Text = "Warmup stopped to protect available memory.";
+            _statusLabel.Text = Loc.Tr(
+                "필요할 때 셰이더를 준비하며 계속합니다…",
+                "Continuing with on-demand shaders…"
+            );
+            _detailLabel.Text = Loc.Tr(
+                "메모리를 보호하기 위해 사전 준비를 중단했습니다.",
+                "Warmup stopped to protect available memory."
+            );
             PatchHelper.Log(
                 $"[ShaderWarmup] deferred for memory safety after {sw.ElapsedMilliseconds}ms: {ex.Message}"
             );
@@ -396,8 +419,15 @@ public class ShaderWarmupScreen : Control
     private async Task UpdateStreamingProgressAsync(int processed, int total, int shaderCount)
     {
         if (total > 0)
-            _progressBar.Value = (double)processed / total * 99;
-        _detailLabel.Text = $"Scanning {processed} / {Math.Max(total, 1)} · {shaderCount} shaders";
+        {
+            _progressBar.Visible = true;
+            _progressBar.MaxValue = total;
+            _progressBar.Value = processed;
+            StartupPerformanceTracker.ReportProgress(StartupStageId.ShaderWarmup, processed, total);
+        }
+        var progressKo = $"검색 {processed} / {Math.Max(total, 1)} · 셰이더 {shaderCount}개";
+        var progressEn = $"Scanning {processed} / {Math.Max(total, 1)} · {shaderCount} shaders";
+        _detailLabel.Text = Loc.IsKo ? progressKo : progressEn;
 
         // A long stretch of non-material scenes would otherwise run without the
         // batch flush yields above. Keep input/rendering responsive regardless.
@@ -519,6 +549,8 @@ public class ShaderWarmupScreen : Control
 
     private void CompleteStateAndSignalRestart(ShaderWarmupOutcome outcome, string reason)
     {
+        Outcome = outcome;
+        _completed = true;
         try
         {
             // Even a managed scan failure completes this optional warmup version.

@@ -21,6 +21,34 @@ internal static class StartupRecoveryFlow
         if (_resolvedForProcess)
             return ModRecoverySession.Current;
 
+        if (TryConsumeDebugModPartition(out int partitionIndex, out int partitionCount))
+        {
+            var debugMods = ScanEnabledMods();
+            var debugPlan = ModRecoveryPolicy.BuildPartition(
+                partitionIndex,
+                partitionCount,
+                debugMods
+            );
+            ModRecoverySession.Configure(debugPlan);
+            _resolvedForProcess = true;
+            PatchHelper.Log(
+                $"[FrameProbe] session-only mod partition armed "
+                    + $"partition={partitionIndex}/{partitionCount} "
+                    + $"selectedMods={debugPlan.SelectedModCount}/{debugPlan.TotalModCount}"
+            );
+            return debugPlan;
+        }
+
+        if (TryConsumeDebugSafeMode())
+        {
+            var debugMods = ScanEnabledMods();
+            var debugPlan = ModRecoveryPolicy.Build(RecoveryAction.SafeMode, "", debugMods);
+            ModRecoverySession.Configure(debugPlan);
+            _resolvedForProcess = true;
+            PatchHelper.Log("[FrameProbe] session-only no-mod comparison armed");
+            return debugPlan;
+        }
+
         if (allowChoice)
             await ShowCompatibilityRendererNoticeAsync(owner);
 
@@ -37,6 +65,7 @@ internal static class StartupRecoveryFlow
         }
 
         StartupRecoveryBridge.RecordStage("recovery-ui");
+        StartupPerformanceTracker.AdvanceTo(StartupStageId.RecoveryChoice);
         var mods = ScanEnabledMods();
         var candidateAvailable = mods.Any(mod =>
             string.Equals(mod.Id, request.ModCandidate, StringComparison.Ordinal)
@@ -64,6 +93,7 @@ internal static class StartupRecoveryFlow
         ModRecoverySession.Configure(plan);
         StartupRecoveryBridge.ClearRecoveryRequest();
         StartupRecoveryBridge.RecordStage("launcher-ready");
+        StartupPerformanceTracker.AdvanceTo(StartupStageId.LauncherReady);
         _resolvedForProcess = true;
         return plan;
     }
@@ -73,6 +103,11 @@ internal static class StartupRecoveryFlow
         var plan = ModRecoverySession.Current;
         if (!plan.FiltersMods || !GodotObject.IsInstanceValid(gameNode))
             return;
+        if (DebugFrameTimeProbe.ShouldAutoContinueRecoverySession)
+        {
+            PatchHelper.Log("[Recovery] debug capture continuing session automatically");
+            return;
+        }
 
         var sessionKo = plan.Action switch
         {
@@ -148,7 +183,10 @@ internal static class StartupRecoveryFlow
         dialog.Cancelled += () => completion.Complete(false);
         owner.AddChild(dialog);
 
-        if (!await completion.Task)
+        StartupPerformanceTracker.AdvanceTo(StartupStageId.RecoveryChoice);
+        bool restartWithVulkan = await completion.Task;
+        StartupPerformanceTracker.AdvanceTo(StartupStageId.LauncherReady);
+        if (!restartWithVulkan)
             return;
         var app = LauncherModel.GetGodotApp();
         if (app == null)
@@ -199,6 +237,46 @@ internal static class StartupRecoveryFlow
         {
             PatchHelper.Log($"[Recovery] read-only mod inventory failed: {ex.Message}");
             return new List<RecoveryModDescriptor>();
+        }
+    }
+
+    private static bool TryConsumeDebugSafeMode()
+    {
+        try
+        {
+            var app = LauncherModel.GetGodotApp();
+            return app != null && (bool)app.Call("consumeDebugModSafeMode");
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log($"[FrameProbe] safe-mode bridge failed: {ex.GetType().Name}");
+            return false;
+        }
+    }
+
+    private static bool TryConsumeDebugModPartition(out int index, out int count)
+    {
+        index = -1;
+        count = 0;
+        try
+        {
+            var app = LauncherModel.GetGodotApp();
+            string value = app == null ? "" : (string)app.Call("consumeDebugModPartition");
+            var parts = value.Split('/');
+            return parts.Length == 2
+                && int.TryParse(parts[0], out index)
+                && int.TryParse(parts[1], out count)
+                && count >= 2
+                && count <= 32
+                && index >= 0
+                && index < count;
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log($"[FrameProbe] mod-partition bridge failed: {ex.GetType().Name}");
+            index = -1;
+            count = 0;
+            return false;
         }
     }
 

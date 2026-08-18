@@ -10,7 +10,7 @@ func fail(_ message: String) -> Never {
 
 let arguments = Array(CommandLine.arguments.dropFirst())
 guard let imageArgument = arguments.first else {
-    fail("usage: audit-screenshot.swift IMAGE [--require-no-hangul]")
+    fail("usage: audit-screenshot.swift IMAGE [--require-no-hangul] [--locate-game-continue]")
 }
 
 let imageUrl = URL(fileURLWithPath: imageArgument)
@@ -33,6 +33,8 @@ func recognize(_ language: String) -> [VNRecognizedTextObservation] {
 
 let englishObservations = recognize("en-US")
 let koreanObservations = recognize("ko-KR")
+let chineseObservations = arguments.contains("--locate-game-continue")
+    ? recognize("zh-Hans") : []
 let hangul = try! NSRegularExpression(pattern: "[가-힣]")
 var hangulLines = 0
 var edgeClippedLines = 0
@@ -42,12 +44,18 @@ var branchPickerTitleFound = false
 var publicBranchCenter: (CGFloat, CGFloat)?
 var publicBetaBranchCenter: (CGFloat, CGFloat)?
 var branchPickerOkCenter: (CGFloat, CGFloat)?
+var gameContinueCenter: (CGFloat, CGFloat)?
 
 for observation in koreanObservations {
     guard let text = observation.topCandidates(1).first?.string else { continue }
     let range = NSRange(text.startIndex..., in: text)
     if hangul.firstMatch(in: text, range: range) != nil {
         hangulLines += 1
+    }
+    if arguments.contains("--locate-safe-mode"),
+       text.replacingOccurrences(of: " ", with: "").contains("안전모드로계속") {
+        let box = observation.boundingBox
+        safeModeCenter = (box.midX, 1.0 - box.midY)
     }
 }
 
@@ -81,6 +89,31 @@ for observation in englishObservations {
     }
 }
 
+if arguments.contains("--locate-game-continue") {
+    for observation in englishObservations + koreanObservations + chineseObservations {
+        guard let candidate = observation.topCandidates(1).first?.string else { continue }
+        let compact = candidate
+            .lowercased()
+            .replacingOccurrences(of: " ", with: "")
+        let isContinue = compact == "continue"
+            || compact == "continuegame"
+            || compact == "继续游戏"
+            || compact == "繼續遊戲"
+            || compact == "계속"
+            || compact == "계속하기"
+        if !isContinue { continue }
+        let box = observation.boundingBox
+        let center = (box.midX, 1.0 - box.midY)
+        // The game main-menu action column is central and above the lower
+        // settings/quit actions. Reject edge/system text and dialog buttons.
+        if center.0 >= 0.20 && center.0 <= 0.80
+            && center.1 >= 0.35 && center.1 <= 0.75 {
+            gameContinueCenter = center
+            break
+        }
+    }
+}
+
 print("recognized_lines_en=\(englishObservations.count)")
 print("recognized_lines_ko=\(koreanObservations.count)")
 print("hangul_lines=\(hangulLines)")
@@ -107,6 +140,12 @@ if arguments.contains("--locate-branch-picker") {
     print(String(format: "public_branch_center_normalized=%.6f,%.6f", publicCenter.0, publicCenter.1))
     print(String(format: "public_beta_branch_center_normalized=%.6f,%.6f", betaCenter.0, betaCenter.1))
     print(String(format: "branch_picker_ok_center_normalized=%.6f,%.6f", okCenter.0, okCenter.1))
+}
+if arguments.contains("--locate-game-continue") {
+    guard let center = gameContinueCenter else {
+        fail("game Continue action was not found")
+    }
+    print(String(format: "game_continue_center_normalized=%.6f,%.6f", center.0, center.1))
 }
 
 if arguments.contains("--require-no-hangul") && hangulLines > 0 {

@@ -9,7 +9,7 @@ Private logs, screenshots, proprietary game files, FMOD inputs, credentials,
 and signing material remain outside git. The main evidence directories are:
 
 - `~/Library/Caches/StS2LauncherInvestigation/upstream-logs/`
-- `~/Library/Caches/StS2LauncherBuildDeps/full/`
+- A repository-external private build cache.
 
 ## Causal conclusions
 
@@ -97,7 +97,7 @@ global formatter check clean.
 The final private, upgrade-compatible artifact is outside the repository:
 
 ```text
-~/Library/Caches/StS2LauncherBuildDeps/full/out-goal-signed16/StS2Launcher-v0.4.2.apk
+<private-cache>/out-goal-signed16/StS2Launcher-v0.4.2.apk
 SHA-256 0f49e908a1e5923987a759f466eb98d8e6745e61ebb6bb7e8c2a63301c35afaa
 package  com.game.sts2launcher.modmanager
 version  0.4.2 (339)

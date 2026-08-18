@@ -59,6 +59,7 @@ public static class ModLoaderPatches
     public static bool InitializePrefix(ref IModManagerFileIo fileIo)
     {
         StartupRecoveryBridge.RecordStage("mod-discovery");
+        StartupPerformanceTracker.AdvanceTo(StartupStageId.ModDiscovery);
         var originalFileIo = fileIo;
         fileIo = new ExternalModsFileIo(AppPaths.ExternalModsDir, originalFileIo);
         PatchHelper.Log(
@@ -72,24 +73,41 @@ public static class ModLoaderPatches
         if (__result == null)
         {
             StartupRecoveryBridge.RecordStage("game-startup");
+            StartupPerformanceTracker.AdvanceTo(StartupStageId.GameStartup);
             return;
         }
         if (__result.IsCompleted)
         {
             if (__result.IsCompletedSuccessfully)
+            {
                 StartupRecoveryBridge.RecordStage("game-startup");
+                StartupPerformanceTracker.AdvanceTo(StartupStageId.GameStartup);
+            }
+            else
+            {
+                StartupPerformanceTracker.EndActive(StartupStageTerminal.Failed);
+            }
             return;
         }
 
         _ = __result.ContinueWith(
             completed =>
             {
-                if (!completed.IsCompletedSuccessfully)
-                    return;
                 try
                 {
                     Callable
-                        .From(() => StartupRecoveryBridge.RecordStage("game-startup"))
+                        .From(() =>
+                        {
+                            if (completed.IsCompletedSuccessfully)
+                            {
+                                StartupRecoveryBridge.RecordStage("game-startup");
+                                StartupPerformanceTracker.AdvanceTo(StartupStageId.GameStartup);
+                            }
+                            else
+                            {
+                                StartupPerformanceTracker.EndActive(StartupStageTerminal.Failed);
+                            }
+                        })
                         .CallDeferred();
                 }
                 catch (Exception ex)
@@ -108,18 +126,27 @@ public static class ModLoaderPatches
     // the candidate without a postfix; a normal loaded return records success.
     public static void TryLoadModPrefix(Mod mod)
     {
+        DebugModLoadTimingPatches.BeginMod();
         var modId = mod?.manifest?.id;
         if (string.IsNullOrWhiteSpace(modId))
             return;
         StartupRecoveryBridge.RecordStage("mod-loading");
+        StartupPerformanceTracker.AdvanceTo(StartupStageId.ModLoad);
         StartupRecoveryBridge.RecordModCandidate(modId);
     }
 
     public static void TryLoadModPostfix(Mod mod)
     {
-        if (mod?.state != ModLoadState.Loaded || string.IsNullOrWhiteSpace(mod.manifest?.id))
+        bool loaded = mod?.state == ModLoadState.Loaded;
+        DebugModLoadTimingPatches.EndMod(loaded);
+        if (string.IsNullOrWhiteSpace(mod?.manifest?.id))
             return;
-        StartupRecoveryBridge.RecordModSuccessful(mod.manifest.id);
+        if (loaded)
+            StartupRecoveryBridge.RecordModSuccessful(mod.manifest.id);
+        StartupPerformanceTracker.AdvanceTo(
+            StartupStageId.ModDiscovery,
+            loaded ? StartupStageTerminal.Completed : StartupStageTerminal.Degraded
+        );
     }
 
     // Skip the Steam-backed mod enumeration on Android (no Steamworks runtime).

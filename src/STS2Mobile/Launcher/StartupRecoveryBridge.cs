@@ -15,6 +15,8 @@ internal static class StartupRecoveryBridge
 {
     public static void InitializeAttemptContext()
     {
+        CompleteNativePerformanceHandoff();
+        StartupPerformanceTracker.BeginManagedStartup();
         try
         {
             var app = LauncherModel.GetGodotApp();
@@ -25,6 +27,18 @@ internal static class StartupRecoveryBridge
         catch (Exception ex)
         {
             PatchHelper.Log($"[StartupRecovery] fingerprint bridge failed: {ex.Message}");
+        }
+    }
+
+    private static void CompleteNativePerformanceHandoff()
+    {
+        try
+        {
+            LauncherModel.GetGodotApp()?.Call("completeNativeStartupPerformance");
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log($"[StartupPerformance] native handoff failed: {ex.Message}");
         }
     }
 

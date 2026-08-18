@@ -12,6 +12,8 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Debug;
 import android.os.Environment;
+import android.os.SystemClock;
+import android.os.Trace;
 import android.provider.Settings;
 import android.util.Log;
 import android.util.TypedValue;
@@ -62,6 +64,9 @@ import org.fmod.FMOD;
 // Main activity for the mobile launcher. Handles FMOD initialization, .NET assembly
 // setup, PCK loading, LAN multicast, and Android Keystore encryption for credentials.
 public class GodotApp extends GodotActivity {
+	private static final long PROCESS_ENTRY_USEC =
+			SystemClock.elapsedRealtimeNanos() / 1_000L;
+
 	static {
 		// FMOD must load before Godot's GDExtension or FMOD_JNI_GetEnv fails.
 		System.loadLibrary("fmod");
@@ -80,11 +85,16 @@ public class GodotApp extends GodotActivity {
 	private static final String LAST_REPORTED_EXIT_PREF = "last_reported_exit_timestamp";
 	private static final String PLANNED_EXIT_PREF = "planned_exit_requested_at";
 	private static final String STARTUP_RECOVERY_PREF = "startup_recovery_journal_v2";
+	private static final String STARTUP_PERFORMANCE_PREF = "startup_performance_native_v1";
+	private static final String STARTUP_PERFORMANCE_MANAGED_PREF =
+			"startup_performance_managed_v1";
 	private static final String RENDERER_COMPATIBILITY_ONCE_PREF =
 			"renderer_compatibility_once";
 	private static final Object STARTUP_RECOVERY_LOCK = new Object();
 	private static StartupRecoveryJournal.State startupRecoveryState;
 	private static long startupAttemptId;
+	private static final PreviousExitReportGate previousExitReportGate =
+			new PreviousExitReportGate();
 	private static volatile boolean previousExitReportReady;
 	private static volatile boolean compatibilityRendererSession;
 	private volatile boolean nativeRendererPromptActive;
@@ -94,7 +104,16 @@ public class GodotApp extends GodotActivity {
 	private volatile int warmupTrimLevel;
 	private volatile boolean debugWarmupPressure;
 	private volatile String debugNativeCrashStage = "";
+	private volatile String debugFrameProbe = "";
+	private volatile boolean debugModSafeMode;
+	private volatile String debugModPartition = "";
+	private volatile boolean debugDeckCacheMutationProbe;
+	private volatile int debugStartupStageDelaySeconds;
+	private volatile boolean startupTelemetryPersistenceEnabled = true;
 	private volatile String lastLoggedStartupStage = "";
+	private static final StartupPerformanceTimeline startupPerformanceTimeline =
+			new StartupPerformanceTimeline(16);
+	private boolean recordsNativeStartupPerformance;
 
 	private volatile boolean pickerActive = false;
 	private final List<File> stagedAtlasCacheDirs = new ArrayList<>();
@@ -122,14 +141,27 @@ public class GodotApp extends GodotActivity {
 
 	@Override
 	public void onCreate(Bundle savedInstanceState) {
+		configureDebugStartupTelemetryPersistence();
+		recordsNativeStartupPerformance = startupPerformanceTimeline.eventCount() == 0;
+		if (recordsNativeStartupPerformance) {
+			beginNativePerformanceStageAt(
+					StartupPerformanceTimeline.STAGE_ANDROID_PROCESS,
+					PROCESS_ENTRY_USEC);
+		}
 		instance = this;
 		consumeCompatibilityRendererRequest();
 		gameDir = new File(getFilesDir(), "game").getAbsolutePath();
 		clearManagedGameInstallFaultOutsideDebug();
+		endNativePerformanceStage(
+				StartupPerformanceTimeline.STAGE_ANDROID_PROCESS,
+				StartupPerformanceTimeline.TERMINAL_COMPLETED);
+		beginNativePerformanceStage(StartupPerformanceTimeline.STAGE_INSTALL_RECOVERY);
 		maybeInjectDebugGameInstallFault("before-install-recovery");
+		boolean installRecoveryHealthy = true;
 		try {
 			GameInstallRecovery.recover(getFilesDir());
 		} catch (IOException ex) {
+			installRecoveryHealthy = false;
 			Log.e(TAG, "[GameInstall] interrupted update recovery failed", ex);
 		}
 		maybeInjectDebugGameInstallFault("after-install-recovery");
@@ -138,9 +170,15 @@ public class GodotApp extends GodotActivity {
 			try {
 				GameInstallRecovery.beginValidation(getFilesDir());
 			} catch (IOException ex) {
+				installRecoveryHealthy = false;
 				Log.e(TAG, "[GameInstall] failed to journal validation attempt", ex);
 			}
 		}
+		endNativePerformanceStage(
+				StartupPerformanceTimeline.STAGE_INSTALL_RECOVERY,
+				installRecoveryHealthy
+						? StartupPerformanceTimeline.TERMINAL_COMPLETED
+						: StartupPerformanceTimeline.TERMINAL_DEGRADED);
 		configureAppPrivateEnvironment();
 		beginStartupAttempt();
 
@@ -150,6 +188,9 @@ public class GodotApp extends GodotActivity {
 		if (isLogcatCaptureEnabled()) {
 			startLogcatCaptureInternal();
 		}
+		if (previousExitReportGate.claimQueryStart()) {
+			startPreviousExitReport();
+		}
 
 		// Issue #11 진단 — 보고자 단말 분리용. 제조사/모델/Android/펌웨어 빌드 ID 1줄.
 		Log.i(TAG, "[Diag/Fold] device=" + Build.MANUFACTURER + "/" + Build.MODEL
@@ -157,6 +198,7 @@ public class GodotApp extends GodotActivity {
 				+ " build=" + Build.DISPLAY);
 
 		SplashScreen splashScreen = SplashScreen.installSplashScreen(this);
+		splashScreen.setKeepOnScreenCondition(() -> !overlayHandoffReady);
 		EdgeToEdge.enable(this);
 
 		// Must be called before any native FMOD calls.
@@ -168,6 +210,11 @@ public class GodotApp extends GodotActivity {
 		// without going through GitHub / Steam round-trips. Gated by version
 		// suffix so prod builds are completely inert.
 		if (BuildConfig.VERSION_NAME != null && BuildConfig.VERSION_NAME.contains("-debug")) {
+			try {
+				android.system.Os.setenv("STS2_DEBUG_QA_TOOLS", "1", true);
+			} catch (Exception ex) {
+				Log.w(TAG, "[Debug] failed to arm process-local QA tools", ex);
+			}
 			handleDebugIntents();
 			processDebugWipeMarkers();
 		}
@@ -180,30 +227,42 @@ public class GodotApp extends GodotActivity {
 		// compressed-texture cache). Without this, atlas frame indexes that
 		// changed in the new PCK keep resolving to the old cached layout, which
 		// surfaces as carded/relic/potion images appearing in the wrong slots.
+		beginNativePerformanceStage(StartupPerformanceTimeline.STAGE_CACHE_SYNC);
 		maybeInjectDebugGameInstallFault("before-cache-staging");
 		boolean wipingAtlas = processAtlasWipeFlow();
 		maybeInjectDebugGameInstallFault("after-cache-staging");
-		if (wipingAtlas) {
-			// Hold the system splash up until our overlay is on screen — without
-			// this the user sees a long black gap during ETC2 re-import (~30s).
-			splashScreen.setKeepOnScreenCondition(() -> !overlayHandoffReady);
-		}
+		endNativePerformanceStage(
+				StartupPerformanceTimeline.STAGE_CACHE_SYNC,
+				wipingAtlas
+						? StartupPerformanceTimeline.TERMINAL_COMPLETED
+						: StartupPerformanceTimeline.TERMINAL_SKIPPED);
 
 		if (gameInstallReady) {
+			beginNativePerformanceStage(StartupPerformanceTimeline.STAGE_ASSEMBLY_SYNC);
 			maybeInjectDebugGameInstallFault("before-assembly-sync");
 			setupAssemblies();
 			maybeInjectDebugGameInstallFault("after-assembly-sync");
+			endNativePerformanceStage(
+					StartupPerformanceTimeline.STAGE_ASSEMBLY_SYNC,
+					StartupPerformanceTimeline.TERMINAL_COMPLETED);
 		} else {
+			skipNativePerformanceStage(StartupPerformanceTimeline.STAGE_ASSEMBLY_SYNC);
 			Log.w(TAG, "[GameInstall] no complete active PCK/DLL tuple; using launcher bootstrap");
 		}
 		extractAssetFile("FMOD_LOGOS/FMOD Logo White - Transparent Background.png", "fmod_logo.png");
 
+		beginNativePerformanceStage(StartupPerformanceTimeline.STAGE_GODOT_BOOTSTRAP);
 		super.onCreate(savedInstanceState);
-		startPreviousExitReport();
+		if (previousExitReportGate.markActivityReady()) {
+			finalizePreviousExitReport();
+		}
 		startStagedAtlasCleanup();
 
-		if (wipingAtlas) {
-			showAtlasWipeOverlay();
+		try {
+			showStartupOverlay(wipingAtlas);
+		} catch (Exception ex) {
+			Log.e(TAG, "[StartupPerformance] native overlay degraded", ex);
+		} finally {
 			overlayHandoffReady = true;
 		}
 
@@ -298,6 +357,30 @@ public class GodotApp extends GodotActivity {
 			if (debugWarmupPressure) {
 				Log.i(TAG, "[ShaderWarmup/Debug] memory-pressure injection armed");
 			}
+			debugDeckCacheMutationProbe =
+					"1".equals(intent.getStringExtra("debug_deck_cache_mutation_probe"));
+			intent.removeExtra("debug_deck_cache_mutation_probe");
+			if (debugDeckCacheMutationProbe) {
+				Log.i(TAG, "[DeckCacheProbe] armed");
+			}
+			String startupDelay = intent.getStringExtra(
+					"debug_startup_stage_delay_seconds");
+			intent.removeExtra("debug_startup_stage_delay_seconds");
+			if (startupDelay != null) {
+				try {
+					debugStartupStageDelaySeconds = Integer.parseInt(startupDelay);
+					if (debugStartupStageDelaySeconds <= 0
+							|| debugStartupStageDelaySeconds > 20) {
+						debugStartupStageDelaySeconds = 0;
+					} else {
+						Log.i(TAG, "[StartupPerformance/Debug] stage delay armed seconds="
+								+ debugStartupStageDelaySeconds);
+					}
+				} catch (NumberFormatException ex) {
+					debugStartupStageDelaySeconds = 0;
+					Log.w(TAG, "[StartupPerformance/Debug] invalid stage delay");
+				}
+			}
 			String nativeCrashStage = intent.getStringExtra("debug_native_crash_stage");
 			if ("launcher-creating".equals(nativeCrashStage)
 					|| "launcher-awaiting-frame".equals(nativeCrashStage)) {
@@ -305,9 +388,208 @@ public class GodotApp extends GodotActivity {
 				Log.i(TAG, "[StartupRecovery/Debug] native crash armed at "
 						+ nativeCrashStage);
 			}
+			String frameProbe = intent.getStringExtra("debug_frame_probe");
+			if ("control".equals(frameProbe)
+					|| "stall-100".equals(frameProbe)
+					|| "launcher-120".equals(frameProbe)
+					|| "game-120".equals(frameProbe)
+					|| "game-baseline-120".equals(frameProbe)
+					|| "game-baseline-safe-120".equals(frameProbe)
+					|| "game-baseline-partition-120".equals(frameProbe)
+					|| "game-quickrestart-baseline-partition-120".equals(frameProbe)
+					|| "game-quickrestart-partition-120".equals(frameProbe)
+					|| "game-safe-120".equals(frameProbe)
+					|| "game-safe-300".equals(frameProbe)
+					|| "game-partition-120".equals(frameProbe)
+					|| "game-menu-60".equals(frameProbe)
+					|| "game-menu-safe-60".equals(frameProbe)
+					|| "game-menu-partition-60".equals(frameProbe)) {
+				debugFrameProbe = frameProbe;
+				debugModSafeMode = "game-baseline-safe-120".equals(frameProbe)
+						|| "game-safe-120".equals(frameProbe)
+						|| "game-safe-300".equals(frameProbe)
+						|| "game-menu-safe-60".equals(frameProbe);
+				if ("game-partition-120".equals(frameProbe)
+						|| "game-baseline-partition-120".equals(frameProbe)
+						|| "game-quickrestart-baseline-partition-120".equals(frameProbe)
+						|| "game-quickrestart-partition-120".equals(frameProbe)
+						|| "game-menu-partition-60".equals(frameProbe)) {
+					String partition = intent.getStringExtra("debug_mod_partition");
+					if (isValidDebugModPartition(partition)) {
+						debugModPartition = partition;
+					} else {
+						debugModSafeMode = true;
+						Log.w(TAG, "[FrameProbe] invalid mod partition; falling back to Safe Mode");
+					}
+				}
+				// ModEntry.Apply runs during super.onCreate below. Arm the expensive
+				// game-method attribution patches through libc before that bootstrap;
+				// release builds and debug launches without a game capture never install
+				// their Harmony trampolines.
+				if ("game-120".equals(frameProbe)
+						|| "game-baseline-120".equals(frameProbe)
+						|| "game-baseline-safe-120".equals(frameProbe)
+						|| "game-baseline-partition-120".equals(frameProbe)
+						|| "game-quickrestart-baseline-partition-120".equals(frameProbe)
+						|| "game-quickrestart-partition-120".equals(frameProbe)
+						|| "game-safe-120".equals(frameProbe)
+						|| "game-safe-300".equals(frameProbe)
+						|| "game-partition-120".equals(frameProbe)
+						|| "game-menu-60".equals(frameProbe)
+						|| "game-menu-safe-60".equals(frameProbe)
+						|| "game-menu-partition-60".equals(frameProbe)) {
+					try {
+						android.system.Os.setenv("STS2_DEBUG_TRANSITION_TIMING", "1", true);
+					} catch (Exception ex) {
+						Log.w(TAG, "[FrameProbe] transition attribution unavailable", ex);
+					}
+				}
+				if ("game-baseline-120".equals(frameProbe)
+						|| "game-baseline-safe-120".equals(frameProbe)
+						|| "game-baseline-partition-120".equals(frameProbe)) {
+					try {
+						android.system.Os.setenv(
+								"STS2_DISABLE_GAMEPLAY_PERFORMANCE_FIXES", "1", true);
+					} catch (Exception ex) {
+						Log.w(TAG, "[FrameProbe] gameplay baseline unavailable", ex);
+					}
+				}
+				if ("game-quickrestart-baseline-partition-120".equals(frameProbe)) {
+					try {
+						android.system.Os.setenv(
+								"STS2_DISABLE_QUICK_RESTART_PERFORMANCE_FIX", "1", true);
+					} catch (Exception ex) {
+						Log.w(TAG, "[FrameProbe] Quick Restart baseline unavailable", ex);
+					}
+				}
+				boolean quickRestartMethodProbe =
+						"1".equals(intent.getStringExtra("debug_quick_restart_method_probe"));
+				intent.removeExtra("debug_quick_restart_method_probe");
+				if (quickRestartMethodProbe
+						&& ("game-quickrestart-baseline-partition-120".equals(frameProbe)
+								|| "game-quickrestart-partition-120".equals(frameProbe))) {
+					try {
+						android.system.Os.setenv("STS2_DEBUG_QUICK_RESTART_PROBE", "1", true);
+						Log.i(TAG, "[QuickRestartProbe] armed");
+					} catch (Exception ex) {
+						Log.w(TAG, "[QuickRestartProbe] unavailable", ex);
+					}
+				}
+				boolean modLoadProbe =
+						"1".equals(intent.getStringExtra("debug_mod_load_probe"));
+				intent.removeExtra("debug_mod_load_probe");
+				if (modLoadProbe) {
+					try {
+						android.system.Os.setenv("STS2_DEBUG_MOD_LOAD_TIMING", "1", true);
+						Log.i(TAG, "[ModLoadProbe] armed");
+					} catch (Exception ex) {
+						Log.w(TAG, "[ModLoadProbe] unavailable", ex);
+					}
+				}
+				intent.removeExtra("debug_frame_probe");
+				intent.removeExtra("debug_mod_partition");
+				Log.i(TAG, "[FrameProbe] armed mode=" + frameProbe);
+			}
 		} catch (IOException ex) {
 			Log.w(TAG, "[Debug] handleDebugIntents IO failure", ex);
 		}
+	}
+
+	private void configureDebugStartupTelemetryPersistence() {
+		if (BuildConfig.VERSION_NAME == null
+				|| !BuildConfig.VERSION_NAME.contains("-debug")) return;
+		Intent intent = getIntent();
+		if (intent == null) return;
+		String requested = intent.getStringExtra("debug_startup_telemetry_persistence");
+		if ("off".equals(requested)) {
+			startupTelemetryPersistenceEnabled = false;
+			Log.i(TAG, "[StartupPerformance/Debug] persistence=off");
+		} else if ("on".equals(requested)) {
+			Log.i(TAG, "[StartupPerformance/Debug] persistence=on");
+		}
+		intent.removeExtra("debug_startup_telemetry_persistence");
+	}
+
+	public String consumeDebugFrameProbe(String point) {
+		if (BuildConfig.VERSION_NAME == null
+				|| !BuildConfig.VERSION_NAME.contains("-debug")) return "";
+		Log.i(TAG, "[FrameProbe] consume point=" + point + " mode=" + debugFrameProbe);
+		boolean launcherPoint = "launcher-ready".equals(point)
+				&& ("control".equals(debugFrameProbe)
+						|| "stall-100".equals(debugFrameProbe)
+						|| "launcher-120".equals(debugFrameProbe));
+		boolean gamePoint = "game-ready".equals(point)
+				&& ("game-120".equals(debugFrameProbe)
+						|| "game-baseline-120".equals(debugFrameProbe)
+						|| "game-baseline-safe-120".equals(debugFrameProbe)
+						|| "game-baseline-partition-120".equals(debugFrameProbe)
+						|| "game-quickrestart-baseline-partition-120".equals(debugFrameProbe)
+						|| "game-quickrestart-partition-120".equals(debugFrameProbe)
+						|| "game-safe-120".equals(debugFrameProbe)
+						|| "game-safe-300".equals(debugFrameProbe)
+						|| "game-partition-120".equals(debugFrameProbe)
+						|| "game-menu-60".equals(debugFrameProbe)
+						|| "game-menu-safe-60".equals(debugFrameProbe)
+						|| "game-menu-partition-60".equals(debugFrameProbe));
+		if (!launcherPoint && !gamePoint) return "";
+		String result = debugFrameProbe;
+		debugFrameProbe = "";
+		return result;
+	}
+
+	public boolean consumeDebugModSafeMode() {
+		if (BuildConfig.VERSION_NAME == null
+				|| !BuildConfig.VERSION_NAME.contains("-debug")) return false;
+		boolean result = debugModSafeMode;
+		debugModSafeMode = false;
+		return result;
+	}
+
+	public boolean consumeDebugDeckCacheMutationProbe() {
+		if (BuildConfig.VERSION_NAME == null
+				|| !BuildConfig.VERSION_NAME.contains("-debug")) return false;
+		boolean result = debugDeckCacheMutationProbe;
+		debugDeckCacheMutationProbe = false;
+		return result;
+	}
+
+	public int consumeDebugStartupStageDelaySeconds() {
+		if (BuildConfig.VERSION_NAME == null
+				|| !BuildConfig.VERSION_NAME.contains("-debug")) return 0;
+		int result = debugStartupStageDelaySeconds;
+		debugStartupStageDelaySeconds = 0;
+		return result;
+	}
+
+	public String consumeDebugModPartition() {
+		if (BuildConfig.VERSION_NAME == null
+				|| !BuildConfig.VERSION_NAME.contains("-debug")) return "";
+		String result = debugModPartition;
+		debugModPartition = "";
+		return result;
+	}
+
+	private static boolean isValidDebugModPartition(String value) {
+		if (value == null) return false;
+		String[] parts = value.split("/", -1);
+		if (parts.length != 2) return false;
+		try {
+			int index = Integer.parseInt(parts[0]);
+			int count = Integer.parseInt(parts[1]);
+			return count >= 2 && count <= 32 && index >= 0 && index < count;
+		} catch (NumberFormatException ex) {
+			return false;
+		}
+	}
+
+	public void markDebugFrameSpike(long elapsedUsec, long intervalUsec) {
+		if (BuildConfig.VERSION_NAME == null
+				|| !BuildConfig.VERSION_NAME.contains("-debug")) return;
+		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+			Trace.setCounter("STS2 frame interval us", intervalUsec);
+		}
+		Log.i(TAG, "[FrameProbe] spike elapsed_us=" + elapsedUsec
+				+ " interval_us=" + intervalUsec);
 	}
 
 	private void resetDebugShaderWarmupState() throws IOException {
@@ -509,64 +791,119 @@ public class GodotApp extends GodotActivity {
 		cleanup.start();
 	}
 
-	// Native loading overlay shown while ETC2 re-import runs (~30–60s on first
-	// boot after a wipe). The system SplashScreen is held in place via
-	// setKeepOnScreenCondition until this overlay is on screen, then
-	// overlayHandoffReady flips and the splash dismisses to reveal our overlay
-	// underneath. C# side calls hideLoadingOverlay() when LauncherUI is up.
+	// Native loading overlay shown for every Godot bootstrap. The system
+	// SplashScreen is held until this surface exists, then C# removes it only
+	// after LauncherUI has rendered a real frame. Cache rebuild copy is selected
+	// only when that work is actually active.
 	private volatile boolean overlayHandoffReady = false;
 	private View loadingOverlayView;
+	private ProgressBar loadingOverlaySpinner;
+	private ProgressBar loadingOverlayProgress;
+	private TextView loadingOverlayCompleted;
+	private TextView loadingOverlayTitle;
+	private TextView loadingOverlayDescription;
+	private boolean managedStartupOverlay;
+	private int managedStartupStage;
+	private String managedProgressPrefix = "";
+	private String managedStagePrefix = "";
+	private String managedTotalPrefix = "";
+	private String managedSecondsSuffix = "";
+	private long managedStageAnchorRealtimeMs;
+	private long managedStartupAnchorRealtimeMs;
+	private long managedProgressDone;
+	private long managedProgressTotal;
+	private long managedWatchdogAfterMs;
+	private String managedWatchdogText = "";
+	private final Runnable managedStartupTick = new Runnable() {
+		@Override
+		public void run() {
+			if (!managedStartupOverlay || loadingOverlayView == null) return;
+			refreshManagedStartupDetail();
+			loadingOverlayView.postDelayed(this, 250L);
+		}
+	};
 
-	private void showAtlasWipeOverlay() {
+	private void showStartupOverlay(boolean rebuildingCache) {
+		managedStartupOverlay = false;
+		managedStartupStage = 0;
 		LinearLayout root = new LinearLayout(this);
 		root.setOrientation(LinearLayout.VERTICAL);
 		root.setGravity(Gravity.CENTER);
 		root.setBackgroundColor(0xFF1A1A1F);
 		root.setClickable(true); // swallow touches while overlay is up
 
-		ProgressBar spinner = new ProgressBar(this);
+		loadingOverlaySpinner = new ProgressBar(this);
 		LinearLayout.LayoutParams spinnerLp = new LinearLayout.LayoutParams(
 				LinearLayout.LayoutParams.WRAP_CONTENT,
 				LinearLayout.LayoutParams.WRAP_CONTENT);
 		spinnerLp.setMargins(0, 0, 0, dpToPx(24));
-		root.addView(spinner, spinnerLp);
+		root.addView(loadingOverlaySpinner, spinnerLp);
 
-		TextView title = new TextView(this);
-		title.setText(nativeText(
-				"이미지 인덱스 캐시를 다시 만드는 중입니다",
-				"Rebuilding the image index cache"));
-		title.setTextColor(0xFFFFFFFF);
-		title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
-		title.setGravity(Gravity.CENTER);
+		loadingOverlayCompleted = new TextView(this);
+		loadingOverlayCompleted.setTextColor(0xFFA6B8C7);
+		loadingOverlayCompleted.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+		loadingOverlayCompleted.setGravity(Gravity.CENTER);
+		loadingOverlayCompleted.setVisibility(View.GONE);
+		LinearLayout.LayoutParams completedLp = new LinearLayout.LayoutParams(
+				LinearLayout.LayoutParams.WRAP_CONTENT,
+				LinearLayout.LayoutParams.WRAP_CONTENT);
+		completedLp.setMargins(dpToPx(24), 0, dpToPx(24), dpToPx(8));
+		root.addView(loadingOverlayCompleted, completedLp);
+
+		loadingOverlayTitle = new TextView(this);
+		loadingOverlayTitle.setText(rebuildingCache
+				? nativeText(
+						"이미지 인덱스 캐시를 다시 만드는 중입니다",
+						"Rebuilding the image index cache")
+				: nativeText("게임 엔진을 시작하는 중입니다", "Starting the game engine"));
+		loadingOverlayTitle.setTextColor(0xFFFFFFFF);
+		loadingOverlayTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
+		loadingOverlayTitle.setGravity(Gravity.CENTER);
 		LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(
 				LinearLayout.LayoutParams.WRAP_CONTENT,
 				LinearLayout.LayoutParams.WRAP_CONTENT);
 		titleLp.setMargins(dpToPx(24), 0, dpToPx(24), dpToPx(8));
-		root.addView(title, titleLp);
+		root.addView(loadingOverlayTitle, titleLp);
 
-		TextView desc = new TextView(this);
-		desc.setText(nativeText(
-				"게임 업데이트가 감지되어 모바일용 텍스처 캐시를\n"
-				+ "새 빌드 기준으로 재생성합니다.\n"
-				+ "첫 실행은 30~60초 소요되며 다음부터는 정상 속도입니다.\n\n"
-				+ "세이브 / 진행도 / 로그인 정보는 보존됩니다.",
-				"A game update was detected, so the mobile texture cache is being rebuilt "
-				+ "for the new build.\nThe first launch takes about 30–60 seconds; later "
-				+ "launches return to normal speed.\n\nSaves, progress, and login data are preserved."));
-		desc.setTextColor(0xFFCCCCCC);
-		desc.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
-		desc.setGravity(Gravity.CENTER);
+		loadingOverlayProgress = new ProgressBar(
+				this, null, android.R.attr.progressBarStyleHorizontal);
+		loadingOverlayProgress.setMax(1_000);
+		loadingOverlayProgress.setVisibility(View.GONE);
+		LinearLayout.LayoutParams progressLp = new LinearLayout.LayoutParams(
+				dpToPx(320), LinearLayout.LayoutParams.WRAP_CONTENT);
+		progressLp.setMargins(dpToPx(24), 0, dpToPx(24), dpToPx(8));
+		root.addView(loadingOverlayProgress, progressLp);
+
+		loadingOverlayDescription = new TextView(this);
+		loadingOverlayDescription.setText(rebuildingCache
+				? nativeText(
+						"게임 업데이트가 감지되어 모바일용 텍스처 캐시를\n"
+						+ "새 빌드 기준으로 재생성합니다.\n"
+						+ "첫 실행은 30~60초 소요되며 다음부터는 정상 속도입니다.\n\n"
+						+ "세이브 / 진행도 / 로그인 정보는 보존됩니다.",
+						"A game update was detected, so the mobile texture cache is being rebuilt "
+						+ "for the new build.\nThe first launch takes about 30–60 seconds; later "
+						+ "launches return to normal speed.\n\nSaves, progress, and login data are preserved.")
+				: nativeText(
+						"Godot과 관리형 게임 코드를 준비하고 있습니다.\n"
+						+ "런처 화면이 준비되면 자동으로 전환됩니다.",
+						"Preparing Godot and managed game code.\n"
+						+ "The launcher appears automatically when it is ready."));
+		loadingOverlayDescription.setTextColor(0xFFCCCCCC);
+		loadingOverlayDescription.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+		loadingOverlayDescription.setGravity(Gravity.CENTER);
 		LinearLayout.LayoutParams descLp = new LinearLayout.LayoutParams(
 				LinearLayout.LayoutParams.WRAP_CONTENT,
 				LinearLayout.LayoutParams.WRAP_CONTENT);
 		descLp.setMargins(dpToPx(24), 0, dpToPx(24), 0);
-		root.addView(desc, descLp);
+		root.addView(loadingOverlayDescription, descLp);
 
 		addContentView(root, new ViewGroup.LayoutParams(
 				ViewGroup.LayoutParams.MATCH_PARENT,
 				ViewGroup.LayoutParams.MATCH_PARENT));
 		loadingOverlayView = root;
-		Log.i(TAG, "[AtlasWipe] Loading overlay shown");
+		Log.i(TAG, "[StartupPerformance] native loading overlay shown"
+				+ (rebuildingCache ? " for cache rebuild" : " for Godot bootstrap"));
 	}
 
 	// Called from C# (LauncherController) once the launcher UI is ready to take
@@ -574,11 +911,102 @@ public class GodotApp extends GodotActivity {
 	public void hideLoadingOverlay() {
 		runOnUiThread(() -> {
 			if (loadingOverlayView == null) return;
+			managedStartupOverlay = false;
+			loadingOverlayView.removeCallbacks(managedStartupTick);
 			ViewGroup parent = (ViewGroup) loadingOverlayView.getParent();
 			if (parent != null) parent.removeView(loadingOverlayView);
 			loadingOverlayView = null;
-			Log.i(TAG, "[AtlasWipe] Loading overlay hidden");
+			loadingOverlaySpinner = null;
+			loadingOverlayProgress = null;
+			loadingOverlayCompleted = null;
+			loadingOverlayTitle = null;
+			loadingOverlayDescription = null;
+			Log.i(TAG, "[StartupPerformance] native loading overlay hidden");
 		});
+	}
+
+	// Godot's game/mod startup is required to stay on the engine thread, which
+	// means a Control._Process overlay cannot redraw while that work is running.
+	// This view consumes the same bounded tracker snapshot but renders and ticks
+	// on Android's UI thread. It shows a determinate bar only for real work units.
+	public void showManagedStartupProgress(
+			int stage,
+			String title,
+			String completed,
+			String progressPrefix,
+			String stagePrefix,
+			String totalPrefix,
+			String secondsSuffix,
+			long activeElapsedUsec,
+			long totalElapsedUsec,
+			long done,
+			long total,
+			long watchdogAfterUsec,
+			String watchdogText) {
+		runOnUiThread(() -> {
+			if (loadingOverlayView == null) showStartupOverlay(false);
+			boolean stageChanged = managedStartupStage != stage;
+			managedStartupOverlay = true;
+			managedStartupStage = stage;
+			managedProgressPrefix = progressPrefix == null ? "" : progressPrefix;
+			managedStagePrefix = stagePrefix == null ? "" : stagePrefix;
+			managedTotalPrefix = totalPrefix == null ? "" : totalPrefix;
+			managedSecondsSuffix = secondsSuffix == null ? "" : secondsSuffix;
+			managedStageAnchorRealtimeMs = SystemClock.elapsedRealtime()
+					- Math.max(0L, activeElapsedUsec / 1_000L);
+			managedStartupAnchorRealtimeMs = SystemClock.elapsedRealtime()
+					- Math.max(0L, totalElapsedUsec / 1_000L);
+			managedProgressDone = done;
+			managedProgressTotal = total;
+			managedWatchdogAfterMs = Math.max(0L, watchdogAfterUsec / 1_000L);
+			managedWatchdogText = watchdogText == null ? "" : watchdogText;
+
+			loadingOverlayTitle.setText(title == null ? "" : title);
+			if (completed == null || completed.isEmpty()) {
+				loadingOverlayCompleted.setVisibility(View.GONE);
+			} else {
+				loadingOverlayCompleted.setText(completed);
+				loadingOverlayCompleted.setVisibility(View.VISIBLE);
+			}
+
+			boolean determinate = total > 0L && done >= 0L && done <= total;
+			loadingOverlaySpinner.setVisibility(determinate ? View.GONE : View.VISIBLE);
+			loadingOverlayProgress.setVisibility(determinate ? View.VISIBLE : View.GONE);
+			if (determinate) {
+				loadingOverlayProgress.setProgress((int) Math.min(
+						1_000L, done * 1_000L / total));
+			}
+
+			refreshManagedStartupDetail();
+			loadingOverlayView.removeCallbacks(managedStartupTick);
+			loadingOverlayView.postDelayed(managedStartupTick, 250L);
+			if (stageChanged) {
+				Log.i(TAG, "[StartupPerformance] visible managed stage=" + stage);
+			}
+		});
+	}
+
+	private void refreshManagedStartupDetail() {
+		if (!managedStartupOverlay || loadingOverlayDescription == null) return;
+		long elapsedMs = Math.max(
+				0L, SystemClock.elapsedRealtime() - managedStageAnchorRealtimeMs);
+		long elapsedSeconds = elapsedMs / 1_000L;
+		long totalElapsedMs = Math.max(
+				0L, SystemClock.elapsedRealtime() - managedStartupAnchorRealtimeMs);
+		long totalElapsedSeconds = totalElapsedMs / 1_000L;
+		String timing = managedStagePrefix + elapsedSeconds + managedSecondsSuffix
+				+ managedTotalPrefix + totalElapsedSeconds + managedSecondsSuffix;
+		if (managedWatchdogAfterMs > 0L
+				&& elapsedMs >= managedWatchdogAfterMs
+				&& !managedWatchdogText.isEmpty()) {
+			loadingOverlayDescription.setText(managedWatchdogText
+					+ managedTotalPrefix + totalElapsedSeconds + managedSecondsSuffix);
+		} else if (managedProgressTotal > 0L) {
+			loadingOverlayDescription.setText(managedProgressDone + " / "
+					+ managedProgressTotal + " · " + timing);
+		} else {
+			loadingOverlayDescription.setText(managedProgressPrefix + timing);
+		}
 	}
 
 	private int dpToPx(int dp) {
@@ -1138,7 +1566,9 @@ public class GodotApp extends GodotActivity {
 	private void reportPreviousProcessExits() {
 		if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
 			Log.i(TAG, "[PreviousExit] unavailable below Android 11");
-			previousExitReportReady = true;
+			if (previousExitReportGate.markQueryComplete()) {
+				finalizePreviousExitReport();
+			}
 			return;
 		}
 
@@ -1195,9 +1625,15 @@ public class GodotApp extends GodotActivity {
 		} catch (Exception ex) {
 			Log.w(TAG, "[PreviousExit] query failed", ex);
 		} finally {
-			maybeShowRendererRecoveryPrompt();
-			previousExitReportReady = true;
+			if (previousExitReportGate.markQueryComplete()) {
+				finalizePreviousExitReport();
+			}
 		}
+	}
+
+	private void finalizePreviousExitReport() {
+		maybeShowRendererRecoveryPrompt();
+		previousExitReportReady = true;
 	}
 
 	private void consumeCompatibilityRendererRequest() {
@@ -1278,6 +1714,88 @@ public class GodotApp extends GodotActivity {
 
 	private String nativeText(String korean, String english) {
 		return isEnglishLauncherLanguage() ? english : korean;
+	}
+
+	private static long startupNowUsec() {
+		return SystemClock.elapsedRealtimeNanos() / 1_000L;
+	}
+
+	private void beginNativePerformanceStage(int stage) {
+		if (!recordsNativeStartupPerformance) return;
+		beginNativePerformanceStageAt(stage, startupNowUsec());
+	}
+
+	private void beginNativePerformanceStageAt(int stage, long timestampUsec) {
+		if (!recordsNativeStartupPerformance) return;
+		boolean accepted = startupPerformanceTimeline.begin(stage, timestampUsec);
+		if (!accepted) {
+			Log.w(TAG, "[StartupPerformance] rejected native begin stage=" + stage);
+			return;
+		}
+		persistNativePerformanceTimeline();
+	}
+
+	private void endNativePerformanceStage(int stage, int terminal) {
+		if (!recordsNativeStartupPerformance) return;
+		boolean accepted = startupPerformanceTimeline.end(stage, terminal, startupNowUsec());
+		if (!accepted) {
+			Log.w(TAG, "[StartupPerformance] rejected native terminal stage=" + stage
+					+ " terminal=" + terminal);
+			return;
+		}
+		persistNativePerformanceTimeline();
+	}
+
+	private void skipNativePerformanceStage(int stage) {
+		if (!recordsNativeStartupPerformance) return;
+		boolean accepted = startupPerformanceTimeline.skip(stage, startupNowUsec());
+		if (!accepted) {
+			Log.w(TAG, "[StartupPerformance] rejected native skip stage=" + stage);
+			return;
+		}
+		persistNativePerformanceTimeline();
+	}
+
+	private void persistNativePerformanceTimeline() {
+		if (!startupTelemetryPersistenceEnabled) return;
+		getSharedPreferences("sts2mobile", MODE_PRIVATE)
+				.edit()
+				.putString(STARTUP_PERFORMANCE_PREF, startupPerformanceTimeline.encode())
+				.apply();
+	}
+
+	// Managed handoff closes the native bootstrap span using the same Android
+	// monotonic clock domain. The bounded numeric summary contains no paths,
+	// account data, device identifiers, mod names, or arbitrary labels.
+	public void completeNativeStartupPerformance() {
+		if (startupPerformanceTimeline.activeStage()
+				== StartupPerformanceTimeline.STAGE_GODOT_BOOTSTRAP) {
+			boolean accepted = startupPerformanceTimeline.end(
+					StartupPerformanceTimeline.STAGE_GODOT_BOOTSTRAP,
+					StartupPerformanceTimeline.TERMINAL_COMPLETED,
+					startupNowUsec());
+			if (accepted) {
+				persistNativePerformanceTimeline();
+				Log.i(TAG, "[StartupPerformance/NativeSummary] "
+						+ startupPerformanceTimeline.encode().replace('\n', ';'));
+			}
+		}
+	}
+
+	public String getNativeStartupPerformance() {
+		return startupPerformanceTimeline.encode();
+	}
+
+	public void recordManagedStartupPerformance(String encoded) {
+		if (!startupTelemetryPersistenceEnabled) return;
+		if (!StartupPerformanceTimeline.isValidEncoding(encoded)) {
+			Log.w(TAG, "[StartupPerformance] rejected invalid managed summary");
+			return;
+		}
+		getSharedPreferences("sts2mobile", MODE_PRIVATE)
+				.edit()
+				.putString(STARTUP_PERFORMANCE_MANAGED_PREF, encoded)
+				.apply();
 	}
 
 	private void beginStartupAttempt() {

@@ -20,7 +20,7 @@
 - Verified: 部分 Adreno/Vulkan 设备存在渲染或 surface 生命周期问题；但应用切后台后的 `QueuePresentKHR` 错误也可能只是结果，不能仅凭日志尾部认定为根因。
 - Verified: 启动流程包含主线程上的文件复制/缓存清理、云同步等待、全资源 shader warmup 和应用重启；这些路径存在 ANR、长时间黑屏或永久等待风险。
 - Verified: 当前日志由应用自身进程捕获，native crash 时往往无法写入最后的 fatal/tombstone，因此“日志没有异常”不能证明进程正常结束。
-- Evidence corpus: `/Users/xingfanxia/Library/Caches/StS2LauncherInvestigation/upstream-logs/`
+- Evidence corpus: a repository-external private investigation cache.
 - Relevant code:
   - `android/src/com/game/sts2launcher/modmanager/GodotApp.java`
   - `src/STS2Mobile/ModEntry.cs`
