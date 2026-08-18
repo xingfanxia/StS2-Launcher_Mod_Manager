@@ -1039,10 +1039,16 @@ try
                     StringComparison.Ordinal
                 )
                     && deckViewCache.Contains(
+                        "WeakReference<GodotObject>",
+                        StringComparison.Ordinal
+                    )
+                    && deckViewCache.Contains("WeakReference<object>", StringComparison.Ordinal)
+                    && !deckViewCache.Contains(
                         "WeakReference<NDeckViewScreen>",
                         StringComparison.Ordinal
                     )
-                    && deckViewCache.Contains("WeakReference<Player>", StringComparison.Ordinal)
+                    && !deckViewCache.Contains("WeakReference<Player>", StringComparison.Ordinal)
+                    && !deckViewCache.Contains("WeakReference<CardModel>", StringComparison.Ordinal)
                     && deckViewCache.Contains(
                         "GodotObject.IsInstanceValid(cached)",
                         StringComparison.Ordinal
@@ -1071,7 +1077,7 @@ try
                         StringComparison.Ordinal
                     )
                     && deckViewCache.Contains("cached.Visible = true", StringComparison.Ordinal),
-                "deck view reuse must retain exactly the same live player/run screen across close"
+                "deck view reuse must preserve behavior without eagerly binding game assemblies in launcher-only mode"
             );
             Assert(
                 deckViewCache.Contains(
@@ -1787,8 +1793,19 @@ try
             Assert(
                 android.Contains("GameInstallRecovery.recover", StringComparison.Ordinal)
                     && android.IndexOf("GameInstallRecovery.recover", StringComparison.Ordinal)
-                        < android.IndexOf("setupAssemblies();", StringComparison.Ordinal),
-                "Android must repair an interrupted directory swap before loading PCK/DLL"
+                        < android.IndexOf(
+                            "setupAssemblies(gameInstallReady);",
+                            StringComparison.Ordinal
+                        )
+                    && android.Contains(
+                        "private void setupAssemblies(boolean copyGameAssemblies)",
+                        StringComparison.Ordinal
+                    )
+                    && android.IndexOf(
+                        "Copied \" + count + \" BCL assemblies from assets",
+                        StringComparison.Ordinal
+                    ) < android.IndexOf("if (!copyGameAssemblies)", StringComparison.Ordinal),
+                "Android must always extract launcher assemblies after recovery while refusing partial game assemblies"
             );
             foreach (
                 var faultPoint in new[]
@@ -2373,6 +2390,10 @@ try
                 ),
                 "APK build must reject reflection/Harmony target mismatches"
             );
+            Assert(
+                buildScript.Contains("scripts/make-bootstrap-pck.py", StringComparison.Ordinal),
+                "APK build must generate the fresh-install Godot bootstrap"
+            );
 
             var dockerBuild = File.ReadAllText(Path.Combine(repository, "docker", "build-apk.sh"));
             foreach (
@@ -2392,6 +2413,11 @@ try
                     $"container APK build must run {requiredCheck}"
                 );
             }
+            Assert(
+                dockerBuild.Contains("assets/bootstrap.pck", StringComparison.Ordinal)
+                    && dockerBuild.Contains("bootstrap_sha256", StringComparison.Ordinal),
+                "container APK build must verify the exact bootstrap inside the final APK"
+            );
         }
     );
 

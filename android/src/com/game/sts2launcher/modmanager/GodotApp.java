@@ -237,16 +237,14 @@ public class GodotApp extends GodotActivity {
 						? StartupPerformanceTimeline.TERMINAL_COMPLETED
 						: StartupPerformanceTimeline.TERMINAL_SKIPPED);
 
-		if (gameInstallReady) {
-			beginNativePerformanceStage(StartupPerformanceTimeline.STAGE_ASSEMBLY_SYNC);
-			maybeInjectDebugGameInstallFault("before-assembly-sync");
-			setupAssemblies();
-			maybeInjectDebugGameInstallFault("after-assembly-sync");
-			endNativePerformanceStage(
-					StartupPerformanceTimeline.STAGE_ASSEMBLY_SYNC,
-					StartupPerformanceTimeline.TERMINAL_COMPLETED);
-		} else {
-			skipNativePerformanceStage(StartupPerformanceTimeline.STAGE_ASSEMBLY_SYNC);
+		beginNativePerformanceStage(StartupPerformanceTimeline.STAGE_ASSEMBLY_SYNC);
+		maybeInjectDebugGameInstallFault("before-assembly-sync");
+		setupAssemblies(gameInstallReady);
+		maybeInjectDebugGameInstallFault("after-assembly-sync");
+		endNativePerformanceStage(
+				StartupPerformanceTimeline.STAGE_ASSEMBLY_SYNC,
+				StartupPerformanceTimeline.TERMINAL_COMPLETED);
+		if (!gameInstallReady) {
 			Log.w(TAG, "[GameInstall] no complete active PCK/DLL tuple; using launcher bootstrap");
 		}
 		extractAssetFile("FMOD_LOGOS/FMOD Logo White - Transparent Background.png", "fmod_logo.png");
@@ -1176,8 +1174,7 @@ public class GodotApp extends GodotActivity {
 	// directory
 	// into the location Godot expects. Skips if already done unless the APK version
 	// changed.
-	private void setupAssemblies() {
-		File srcDir = findAssembliesDir();
+	private void setupAssemblies(boolean copyGameAssemblies) {
 		File destDir = new File(getFilesDir(), ".godot/mono/publish/arm64");
 
 		boolean versionChanged = isNewVersion();
@@ -1218,9 +1215,15 @@ public class GodotApp extends GodotActivity {
 			Log.e(TAG, "Failed to copy BCL assemblies", e);
 		}
 
+		if (!copyGameAssemblies) {
+			Log.i(TAG, "Skipped game assembly sync without a validated active install");
+			return;
+		}
+
 		// Only copy game assemblies that don't already exist in BCL. The depot has
 		// desktop
 		// CoreCLR versions that are incompatible with Android's Mono runtime.
+		File srcDir = findAssembliesDir();
 		if (!srcDir.exists() || !srcDir.isDirectory()) {
 			Log.w(TAG, "Game assemblies source dir not found: " + srcDir.getAbsolutePath());
 			return;

@@ -119,6 +119,17 @@ dotnet run --project tools/workshop-sync-tests/workshop-sync-tests.csproj
 apk_path="$(find android/build/outputs/apk/mono/release -maxdepth 1 -type f -name '*.apk' -print -quit)"
 [ -n "$apk_path" ] || fail "Gradle completed without producing an APK"
 
+# A previous upgrade-only proof missed this generated asset because the old
+# install had already extracted it. Reject any APK that cannot cold-start Godot
+# from empty app data, and bind the packaged bytes to the deterministic writer.
+expected_bootstrap_sha256="0ae19844e9666b8ba8754d60430a2d26109808e31ebf1c51891c402a046ccbef"
+bootstrap_entry_count="$(unzip -Z1 "$apk_path" | grep -Fxc 'assets/bootstrap.pck' || true)"
+[ "$bootstrap_entry_count" = "1" ] \
+    || fail "Final APK must contain exactly one assets/bootstrap.pck"
+bootstrap_sha256="$(unzip -p "$apk_path" assets/bootstrap.pck | sha256sum | cut -d' ' -f1)"
+[ "$bootstrap_sha256" = "$expected_bootstrap_sha256" ] \
+    || fail "Unexpected packaged bootstrap PCK: $bootstrap_sha256"
+
 # Verify the helpers survived dependency merging/shrinking and reached DEX.
 unzip -p "$apk_path" classes.dex > "$WORK_DIR/classes.dex"
 "$ANDROID_HOME/build-tools/35.0.0/dexdump" "$WORK_DIR/classes.dex" > "$WORK_DIR/classes.dump"
