@@ -54,5 +54,13 @@
       Include="../../src/STS2Mobile/Launcher/QuickRestartPerformancePolicy.cs"
       Link="QuickRestartPerformancePolicy.cs"
     />
+    <Compile
+      Include="../../src/STS2Mobile/Steam/BoundedAsyncWork.cs"
+      Link="BoundedAsyncWork.cs"
+    />
+    <Compile
+      Include="../../src/STS2Mobile/Steam/CloudContentHash.cs"
+      Link="CloudContentHash.cs"
+    />
   </ItemGroup>
 </Project>

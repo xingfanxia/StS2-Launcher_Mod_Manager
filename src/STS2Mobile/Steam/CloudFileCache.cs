@@ -260,6 +260,11 @@ public class CloudFileCache
                     new CCloud_EnumerateUserFiles_Request
                     {
                         appid = AppId,
+                        // file_sha is part of Steam's extended manifest. Without
+                        // this flag the service returns only basic metadata, so
+                        // every unchanged mutable save looks hashless and is
+                        // downloaded again on every manual pull.
+                        extended_details = true,
                         start_index = startIndex,
                         count = pageSize,
                     }

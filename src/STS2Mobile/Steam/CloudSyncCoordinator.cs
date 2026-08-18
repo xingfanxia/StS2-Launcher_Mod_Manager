@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using MegaCrit.Sts2.Core.Saves;
 
@@ -33,6 +34,7 @@ public enum CloudBatchOutcome
 public static class CloudSyncCoordinator
 {
     private const int HistoryFileLimit = 100;
+    private const int ManualPullDownloadConcurrency = 4;
 
     // issue #81 — 게임의 클라우드 히스토리 캡 한도(MegaCrit.Sts2.Core.Saves.Managers.
     // RunHistorySaveManager: maxCloudFileCount=100, byteLimit=5MB). 런처-측 트림도 동일 한도.
@@ -254,6 +256,7 @@ public static class CloudSyncCoordinator
         onPhase?.Invoke("클라우드 반영 중");
         cloudStore.BeginSaveBatch();
         int count = 0;
+        int unchanged = 0;
         int deletedCloud = 0;
         bool anyLoopFailure = false;
         foreach (var path in paths)
@@ -297,6 +300,15 @@ public static class CloudSyncCoordinator
                 }
 
                 string content = localStore.ReadFile(path);
+                if (
+                    cloudStore.FileExists(path)
+                    && CloudContentHash.Matches(cloudStore.GetFileSha(path), content)
+                )
+                {
+                    unchanged++;
+                    PatchHelper.Log($"[Cloud] Push: skipping {path} (manifest SHA-1 match)");
+                    continue;
+                }
                 PatchHelper.Log($"[Cloud] Push: queuing {path} ({content.Length} bytes)");
                 cloudStore.WriteFile(path, content);
                 count++;
@@ -338,8 +350,8 @@ public static class CloudSyncCoordinator
         }
 
         PatchHelper.Log(
-            $"[Cloud] Push complete: {count} files batched for upload, {deletedCloud} cloud files "
-                + $"mirror-deleted, outcome={outcome}"
+            $"[Cloud] Push complete: {count} files batched for upload, {unchanged} unchanged, "
+                + $"{deletedCloud} cloud files mirror-deleted, outcome={outcome}"
         );
         return outcome;
     }
@@ -386,14 +398,19 @@ public static class CloudSyncCoordinator
         PatchHelper.Log($"[Cloud] Pull: starting ({paths.Count} files)");
 
         int downloaded = 0;
-        int skipped = 0;
+        int missingCloud = 0;
+        int existingHistory = 0;
+        int unchanged = 0;
         int deletedLocal = 0;
         int done = 0;
-        bool anyFailure = false;
+        int failureCount = 0;
+        var downloadPaths = new List<string>();
+
+        // Resolve no-op and mirror-delete cases before starting network work.
+        // This keeps all local-tree inspection/mutation single-threaded and
+        // leaves only independent cloud reads for the bounded parallel stage.
         foreach (var path in paths)
         {
-            done++;
-            progress?.Report((done, paths.Count));
             try
             {
                 if (!cloudStore.FileExists(path))
@@ -406,8 +423,9 @@ public static class CloudSyncCoordinator
                     }
                     else
                     {
-                        skipped++;
+                        missingCloud++;
                     }
+                    ReportOneCompleted();
                     continue;
                 }
                 // issue #81 — 불변 history run 을 로컬이 이미 갖고 있으면 다운로드 스킵.
@@ -415,61 +433,164 @@ public static class CloudSyncCoordinator
                 // 대량 순차 왕복(느린 pull) 제거. (mutable 파일은 종전대로 다운로드.)
                 if (IsHistoryRunFile(path) && localStore.FileExists(path))
                 {
-                    skipped++;
+                    existingHistory++;
+                    ReportOneCompleted();
                     continue;
                 }
-                PatchHelper.Log($"[Cloud] Pull: downloading {path}");
-                var pullTime = cloudStore.GetLastModifiedTime(path);
-                string content = await cloudStore.ReadFileAsync(path);
-                await localStore.WriteFileAsync(path, content);
-                localStore.SetLastModifiedTime(path, pullTime);
-                PatchHelper.Log($"[Cloud] Pull: wrote {path} ({content.Length} bytes)");
-                downloaded++;
-            }
-            catch (Exception ex)
-            {
-                // Issue #31: stale-cache fallback. Steam's EnumerateUserFiles RPC
-                // keeps remotely-deleted files in the manifest for a while after
-                // the actual storage is wiped, so cloudStore.FileExists can return
-                // true while ClientFileDownload returns FileNotFound. The download
-                // failure is the authoritative signal that cloud is empty — mirror
-                // that locally for ephemeral run files.
-                if (
-                    IsEphemeralRunFile(path)
-                    && ex.Message.Contains("FileNotFound", StringComparison.OrdinalIgnoreCase)
-                    && localStore.FileExists(path)
-                )
+                if (localStore.FileExists(path))
                 {
                     try
                     {
-                        DeleteEphemeralLocalWithBackup(localStore, path);
-                        deletedLocal++;
+                        string localContent = localStore.ReadFile(path);
+                        string remoteSha = cloudStore.GetFileSha(path);
+                        if (CloudContentHash.Matches(remoteSha, localContent))
+                        {
+                            unchanged++;
+                            PatchHelper.Log(
+                                $"[Cloud] Pull: skipping {path} (manifest SHA-1 match)"
+                            );
+                            ReportOneCompleted();
+                            continue;
+                        }
                         PatchHelper.Log(
-                            $"[Cloud] Pull: deleted local {path} (cloud stale-cache, actually gone)"
+                            $"[Cloud] Pull: manifest SHA mismatch for {path} "
+                                + $"(format={CloudContentHash.DescribeFormat(remoteSha)}, "
+                                + $"local_chars={localContent.Length}, "
+                                + $"cloud_size={cloudStore.GetFileSize(path)})"
                         );
                     }
-                    catch (Exception delEx)
+                    catch (Exception ex)
                     {
+                        // A local read/hash failure should be repaired from cloud,
+                        // not turn a recoverable file into a failed batch.
                         PatchHelper.Log(
-                            $"[Cloud] Pull: stale-cache delete failed for {path}: {delEx.Message}"
+                            $"[Cloud] Pull: local hash unavailable for {path}: {ex.Message}"
                         );
-                        anyFailure = true;
                     }
                 }
-                else
-                {
-                    PatchHelper.Log($"[Cloud] Pull: failed for {path}: {ex.Message}");
-                    anyFailure = true;
-                }
+                downloadPaths.Add(path);
+            }
+            catch (Exception ex)
+            {
+                PatchHelper.Log($"[Cloud] Pull: failed to plan {path}: {ex.Message}");
+                failureCount++;
+                ReportOneCompleted();
             }
         }
 
-        var outcome = anyFailure ? CloudBatchOutcome.Failed : CloudBatchOutcome.Success;
+        if (downloadPaths.Count > 0)
+        {
+            PatchHelper.Log(
+                $"[Cloud] Pull: downloading {downloadPaths.Count} files with "
+                    + $"concurrency={Math.Min(ManualPullDownloadConcurrency, downloadPaths.Count)}"
+            );
+            using var localMutationGate = new SemaphoreSlim(1, 1);
+            await BoundedAsyncWork
+                .ForEachAsync(
+                    downloadPaths,
+                    ManualPullDownloadConcurrency,
+                    async path =>
+                    {
+                        try
+                        {
+                            PatchHelper.Log($"[Cloud] Pull: downloading {path}");
+                            var pullTime = cloudStore.GetLastModifiedTime(path);
+                            string content = await cloudStore
+                                .ReadFileAsync(path)
+                                .ConfigureAwait(false);
+
+                            // GodotFileIo is not treated as thread-safe. Network reads
+                            // overlap, but each local write and timestamp update remains
+                            // an ordered critical section touching only one path.
+                            await localMutationGate.WaitAsync().ConfigureAwait(false);
+                            try
+                            {
+                                await localStore
+                                    .WriteFileAsync(path, content)
+                                    .ConfigureAwait(false);
+                                localStore.SetLastModifiedTime(path, pullTime);
+                            }
+                            finally
+                            {
+                                localMutationGate.Release();
+                            }
+
+                            PatchHelper.Log($"[Cloud] Pull: wrote {path} ({content.Length} bytes)");
+                            Interlocked.Increment(ref downloaded);
+                        }
+                        catch (Exception ex)
+                        {
+                            // Issue #31: stale-cache fallback. Steam's enumerate RPC
+                            // can retain a remotely-deleted file. Only the matching
+                            // ephemeral local save may be removed, under the same local
+                            // mutation gate used by successful downloads.
+                            bool handledStaleDelete = false;
+                            if (
+                                IsEphemeralRunFile(path)
+                                && ex.Message.Contains(
+                                    "FileNotFound",
+                                    StringComparison.OrdinalIgnoreCase
+                                )
+                            )
+                            {
+                                await localMutationGate.WaitAsync().ConfigureAwait(false);
+                                try
+                                {
+                                    if (localStore.FileExists(path))
+                                    {
+                                        DeleteEphemeralLocalWithBackup(localStore, path);
+                                        Interlocked.Increment(ref deletedLocal);
+                                        handledStaleDelete = true;
+                                        PatchHelper.Log(
+                                            $"[Cloud] Pull: deleted local {path} "
+                                                + "(cloud stale-cache, actually gone)"
+                                        );
+                                    }
+                                }
+                                catch (Exception deleteEx)
+                                {
+                                    handledStaleDelete = true;
+                                    Interlocked.Increment(ref failureCount);
+                                    PatchHelper.Log(
+                                        $"[Cloud] Pull: stale-cache delete failed for {path}: "
+                                            + deleteEx.Message
+                                    );
+                                }
+                                finally
+                                {
+                                    localMutationGate.Release();
+                                }
+                            }
+
+                            if (!handledStaleDelete)
+                            {
+                                Interlocked.Increment(ref failureCount);
+                                PatchHelper.Log($"[Cloud] Pull: failed for {path}: {ex.Message}");
+                            }
+                        }
+                        finally
+                        {
+                            ReportOneCompleted();
+                        }
+                    }
+                )
+                .ConfigureAwait(false);
+        }
+
+        var outcome = failureCount > 0 ? CloudBatchOutcome.Failed : CloudBatchOutcome.Success;
         PatchHelper.Log(
-            $"[Cloud] Pull complete: {downloaded} downloaded, {skipped} not in cloud, "
+            $"[Cloud] Pull complete: {downloaded} downloaded, "
+                + $"{existingHistory} existing history skipped, {unchanged} unchanged, "
+                + $"{missingCloud} absent from cloud, "
                 + $"{deletedLocal} local files mirror-deleted, outcome={outcome}"
         );
         return outcome;
+
+        void ReportOneCompleted()
+        {
+            int completed = Interlocked.Increment(ref done);
+            progress?.Report((completed, paths.Count));
+        }
     }
 
     // issue #81 — 런처-측 클라우드 히스토리 캡. 게임의 RunHistorySaveManager 캡(100/5MB)은

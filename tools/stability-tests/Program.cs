@@ -1,11 +1,233 @@
 using STS2Mobile.Launcher;
 using STS2Mobile.Launcher.Components;
+using STS2Mobile.Steam;
 
 var root = Path.Combine(Path.GetTempPath(), $"sts2-stability-tests-{Guid.NewGuid():N}");
 Directory.CreateDirectory(root);
 
 try
 {
+    Run(
+        "Steam cloud enumeration requests content hashes",
+        () =>
+        {
+            var repository = FindRepositoryRoot();
+            var cache = File.ReadAllText(
+                Path.Combine(
+                    repository,
+                    "src",
+                    "STS2Mobile",
+                    "Steam",
+                    "CloudFileCache.cs"
+                )
+            );
+
+            Assert(
+                cache.Contains("extended_details = true", StringComparison.Ordinal),
+                "EnumerateUserFiles must request extended metadata or file_sha is omitted"
+            );
+        }
+    );
+
+    Run(
+        "Steam manifest hashes skip unchanged whole-file cloud transfers",
+        () =>
+        {
+            Assert(
+                CloudContentHash.Matches(
+                    "A9993E364706816ABA3E25717850C26C9CD0D89D",
+                    "abc"
+                ),
+                "SHA-1 matching must be case-insensitive"
+            );
+            Assert(
+                CloudContentHash.Matches(
+                    "sha1:a9993e364706816aba3e25717850c26c9cd0d89d",
+                    "abc"
+                ),
+                "Steam SHA-1 prefixes must be accepted"
+            );
+            Assert(
+                CloudContentHash.Matches("qZk+NkcGgWq6PiVxeFDCbJzQ2J0=", "abc"),
+                "20-byte Base64 manifest hashes must be accepted"
+            );
+            Assert(
+                CloudContentHash.Matches(
+                    "da39a3ee5e6b4b0d3255bfef95601890afd80709",
+                    ""
+                ),
+                "empty saves must use the canonical raw-content SHA-1"
+            );
+            Assert(
+                !CloudContentHash.Matches(
+                    "a9993e364706816aba3e25717850c26c9cd0d89d",
+                    "changed"
+                ),
+                "changed content must not be skipped"
+            );
+            Assert(
+                !CloudContentHash.Matches("not-a-steam-sha", "abc"),
+                "unknown manifest hash formats must fail open to transfer"
+            );
+        }
+    );
+
+    Run(
+        "bounded cloud downloads overlap without exceeding their connection budget",
+        () =>
+        {
+            const int concurrency = 4;
+            var sync = new object();
+            var release = new TaskCompletionSource<bool>(
+                TaskCreationOptions.RunContinuationsAsynchronously
+            );
+            var saturated = new TaskCompletionSource<bool>(
+                TaskCreationOptions.RunContinuationsAsynchronously
+            );
+            int active = 0;
+            int maximum = 0;
+            int completed = 0;
+
+            var run = BoundedAsyncWork.ForEachAsync(
+                Enumerable.Range(0, 11).ToArray(),
+                concurrency,
+                async _ =>
+                {
+                    lock (sync)
+                    {
+                        active++;
+                        maximum = Math.Max(maximum, active);
+                        if (active == concurrency)
+                            saturated.TrySetResult(true);
+                    }
+
+                    await release.Task.ConfigureAwait(false);
+
+                    lock (sync)
+                    {
+                        active--;
+                        completed++;
+                    }
+                }
+            );
+
+            Assert(
+                saturated.Task.Wait(TimeSpan.FromSeconds(2)),
+                "the bounded worker never overlapped independent downloads"
+            );
+            lock (sync)
+                Assert(maximum == concurrency, "the worker exceeded its concurrency budget");
+
+            release.TrySetResult(true);
+            Assert(run.Wait(TimeSpan.FromSeconds(2)), "the bounded worker did not drain");
+            lock (sync)
+            {
+                Assert(active == 0, "an async worker remained active after drain");
+                Assert(completed == 11, "the bounded worker lost an item");
+            }
+        }
+    );
+
+    Run(
+        "Android login autofill uses the OS credential boundary without crossing values",
+        () =>
+        {
+            var repository = FindRepositoryRoot();
+            var android = File.ReadAllText(
+                Path.Combine(
+                    repository,
+                    "android",
+                    "src",
+                    "com",
+                    "game",
+                    "sts2launcher",
+                    "modmanager",
+                    "GodotApp.java"
+                )
+            );
+            var bridge = File.ReadAllText(
+                Path.Combine(
+                    repository,
+                    "src",
+                    "STS2Mobile",
+                    "Launcher",
+                    "AndroidLoginAutofillBridge.cs"
+                )
+            );
+            var login = File.ReadAllText(
+                Path.Combine(
+                    repository,
+                    "src",
+                    "STS2Mobile",
+                    "Launcher",
+                    "Sections",
+                    "LoginSection.cs"
+                )
+            );
+
+            Assert(
+                android.Contains(
+                    "configureLoginAutofill(String fieldType, String normalizedAnchor)",
+                    StringComparison.Ordinal
+                )
+                    && android.Contains("GodotEditText", StringComparison.Ordinal)
+                    && android.Contains("View.AUTOFILL_HINT_USERNAME", StringComparison.Ordinal)
+                    && android.Contains("View.AUTOFILL_HINT_PASSWORD", StringComparison.Ordinal)
+                    && android.Contains("AutofillManager", StringComparison.Ordinal)
+                    && android.Contains("setAutofillHints(hint)", StringComparison.Ordinal)
+                    && android.Contains("View.IMPORTANT_FOR_AUTOFILL_YES", StringComparison.Ordinal)
+                    && android.Contains("positionLoginAutofillAnchor", StringComparison.Ordinal)
+                    && android.Contains("editText.setX(left)", StringComparison.Ordinal)
+                    && android.Contains("editText.setY(top)", StringComparison.Ordinal)
+                    && android.Contains("onWindowFocusChanged(boolean hasFocus)", StringComparison.Ordinal)
+                    && android.Contains("restoreGodotEditTextBounds(editText)", StringComparison.Ordinal)
+                    && android.Contains("editText.clearFocus()", StringComparison.Ordinal)
+                    && android.Contains("requestAutofill(editText)", StringComparison.Ordinal),
+                "the Android bridge must annotate Godot's existing native editor"
+            );
+            Assert(
+                android.Contains("clearLoginAutofill()", StringComparison.Ordinal)
+                    && android.Contains("autofillManager.cancel()", StringComparison.Ordinal)
+                    && android.Contains(
+                        "setAutofillHints((String[]) null)",
+                        StringComparison.Ordinal
+                    ),
+                "field changes and login exit must terminate stale autofill sessions"
+            );
+            Assert(
+                bridge.Contains(
+                    "Configure(LoginAutofillField field, Control anchor)",
+                    StringComparison.Ordinal
+                )
+                    && bridge.Contains("anchor.GetGlobalRect()", StringComparison.Ordinal)
+                    && bridge.Contains("anchor.GetViewportRect()", StringComparison.Ordinal)
+                    && bridge.Contains(
+                        ".Call(\"configureLoginAutofill\", fieldType, normalizedAnchor)",
+                        StringComparison.Ordinal
+                    )
+                    && bridge.Contains(".Call(\"clearLoginAutofill\")", StringComparison.Ordinal)
+                    && !bridge.Contains(".Text", StringComparison.Ordinal),
+                "the managed bridge must pass only a fixed field-type token, never a credential"
+            );
+            Assert(
+                login.Contains(
+                    "ConfigureAutofill(UsernameField, LoginAutofillField.Username)",
+                    StringComparison.Ordinal
+                )
+                    && login.Contains(
+                        "ConfigureAutofill(_passwordField, LoginAutofillField.Password)",
+                        StringComparison.Ordinal
+                    )
+                    && login.Contains("field.FocusEntered", StringComparison.Ordinal)
+                    && login.Contains("field.GuiInput", StringComparison.Ordinal)
+                    && login.Contains("InputEventScreenTouch", StringComparison.Ordinal)
+                    && login.Contains("VisibilityChanged", StringComparison.Ordinal)
+                    && !login.Contains("FocusExited += AndroidLoginAutofillBridge.Clear", StringComparison.Ordinal),
+                "both login fields must request on focus and retry taps without cancelling provider UI"
+            );
+        }
+    );
+
     Run(
         "Quick Restart compatibility is exact and idle processing is impossible",
         () =>
@@ -2147,6 +2369,13 @@ try
             Assert(
                 modEntry.Contains("Call(\"hideLoadingOverlay\")", StringComparison.Ordinal),
                 "the always-on native overlay must also hand off to a standalone launcher"
+            );
+            Assert(
+                !modEntry.Contains(
+                    "Callable.From(() => LauncherModel.GetGodotApp()?.Call",
+                    StringComparison.Ordinal
+                ),
+                "the deferred handoff must be a void callback, not a nullable Variant callback"
             );
         }
     );

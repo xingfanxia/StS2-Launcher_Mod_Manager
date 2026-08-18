@@ -2,6 +2,7 @@ package com.game.sts2launcher.modmanager;
 
 import org.godotengine.godot.Godot;
 import org.godotengine.godot.GodotActivity;
+import org.godotengine.godot.input.GodotEditText;
 
 import android.app.ActivityManager;
 import android.app.AlertDialog;
@@ -21,6 +22,7 @@ import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.autofill.AutofillManager;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
@@ -111,6 +113,14 @@ public class GodotApp extends GodotActivity {
 	private volatile int debugStartupStageDelaySeconds;
 	private volatile boolean startupTelemetryPersistenceEnabled = true;
 	private volatile String lastLoggedStartupStage = "";
+	private String loginAutofillHint;
+	private String lastRequestedLoginAutofillHint;
+	private long lastLoginAutofillRequestUptimeMs;
+	private boolean loginAutofillOriginalBoundsCaptured;
+	private int loginAutofillOriginalWidth;
+	private int loginAutofillOriginalHeight;
+	private float loginAutofillOriginalX;
+	private float loginAutofillOriginalY;
 	private static final StartupPerformanceTimeline startupPerformanceTimeline =
 			new StartupPerformanceTimeline(16);
 	private boolean recordsNativeStartupPerformance;
@@ -125,6 +135,7 @@ public class GodotApp extends GodotActivity {
 	private File logcatFile;
 	private static final String DEBUG_LOGCAT_PREF = "debug_logcat_enabled";
 	private static final String EXTERNAL_LOGS_SUBDIR = "StS2LauncherMM/Logs";
+	private static final long LOGIN_AUTOFILL_RETRY_DEBOUNCE_MS = 300L;
 	// Default ON so users hitting boot crashes still produce a log; toggle off
 	// in-app to opt out. See LauncherController.OnDebugTogglePressed.
 	private static final boolean DEBUG_LOGCAT_DEFAULT = true;
@@ -1498,6 +1509,21 @@ public class GodotApp extends GodotActivity {
 	}
 
 	@Override
+	public void onWindowFocusChanged(boolean hasFocus) {
+		super.onWindowFocusChanged(hasFocus);
+		if (!hasFocus || Build.VERSION.SDK_INT < Build.VERSION_CODES.O
+				|| loginAutofillHint == null) return;
+		GodotEditText editText = findGodotEditText(getWindow().getDecorView());
+		if (editText != null) {
+			// The provider popup needs the temporary field-aligned bounds only while
+			// it owns window focus. Restore Godot's IME proxy before the next tap so
+			// SurfaceView input continues to reach the logical LineEdit.
+			restoreGodotEditTextBounds(editText);
+			editText.clearFocus();
+		}
+	}
+
+	@Override
 	protected void onDestroy() {
 		if (multicastLock != null && multicastLock.isHeld()) {
 			multicastLock.release();
@@ -1509,6 +1535,148 @@ public class GodotApp extends GodotActivity {
 
 	public static GodotApp getInstance() {
 		return instance;
+	}
+
+	// Godot renders LineEdit controls inside its surface, so password managers
+	// cannot identify them directly. GodotEditText is the existing native IME
+	// proxy: annotating that view lets the user-selected Android AutofillService
+	// fill the focused LineEdit through Godot's normal TextWatcher path. This
+	// boundary receives only a closed field-type token, never a credential value.
+	public void configureLoginAutofill(String fieldType, String normalizedAnchor) {
+		if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
+
+		final String hint;
+		if ("username".equals(fieldType)) {
+			hint = View.AUTOFILL_HINT_USERNAME;
+		} else if ("password".equals(fieldType)) {
+			hint = View.AUTOFILL_HINT_PASSWORD;
+		} else {
+			return;
+		}
+		final float[] anchor = parseLoginAutofillAnchor(normalizedAnchor);
+		if (anchor == null) return;
+
+		runOnUiThread(() -> {
+			GodotEditText editText = findGodotEditText(getWindow().getDecorView());
+			if (editText == null) return;
+			positionLoginAutofillAnchor(editText, anchor);
+
+			AutofillManager autofillManager = getSystemService(AutofillManager.class);
+			if (autofillManager != null && !hint.equals(loginAutofillHint)) {
+				// The same native editor represents every Godot LineEdit. End any
+				// response cached for the previous logical field before changing hints.
+				autofillManager.cancel();
+			}
+			editText.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_YES);
+			editText.setAutofillHints(hint);
+			loginAutofillHint = hint;
+
+			if (autofillManager != null && autofillManager.isEnabled()) {
+				// Godot may move native focus after the managed FocusEntered signal.
+				// Posting once keeps the request ordered behind that focus handoff;
+				// normal Android focus handling remains the fallback.
+				editText.post(() -> {
+					if (!hint.equals(loginAutofillHint) || !editText.hasFocus()) return;
+					long now = SystemClock.uptimeMillis();
+					boolean duplicateRequest = hint.equals(lastRequestedLoginAutofillHint)
+							&& now - lastLoginAutofillRequestUptimeMs
+									< LOGIN_AUTOFILL_RETRY_DEBOUNCE_MS;
+					if (duplicateRequest) return;
+					lastRequestedLoginAutofillHint = hint;
+					lastLoginAutofillRequestUptimeMs = now;
+					autofillManager.requestAutofill(editText);
+				});
+			}
+		});
+	}
+
+	public void clearLoginAutofill() {
+		if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
+		runOnUiThread(() -> {
+			AutofillManager autofillManager = getSystemService(AutofillManager.class);
+			if (autofillManager != null) {
+				autofillManager.cancel();
+			}
+			GodotEditText editText = findGodotEditText(getWindow().getDecorView());
+			if (editText != null) {
+				editText.setAutofillHints((String[]) null);
+				editText.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);
+				restoreGodotEditTextBounds(editText);
+			}
+			loginAutofillHint = null;
+			lastRequestedLoginAutofillHint = null;
+			lastLoginAutofillRequestUptimeMs = 0L;
+		});
+	}
+
+	private float[] parseLoginAutofillAnchor(String encoded) {
+		if (encoded == null || encoded.length() > 64) return null;
+		String[] parts = encoded.split("\\|", -1);
+		if (parts.length != 4) return null;
+		float[] result = new float[4];
+		try {
+			for (int index = 0; index < result.length; index++) {
+				result[index] = Float.parseFloat(parts[index]);
+				if (!Float.isFinite(result[index])) return null;
+			}
+		} catch (NumberFormatException ex) {
+			return null;
+		}
+		if (result[0] < 0.0f || result[1] < 0.0f
+				|| result[2] > 1.0f || result[3] > 1.0f
+				|| result[2] <= result[0] || result[3] <= result[1]) {
+			return null;
+		}
+		return result;
+	}
+
+	private void positionLoginAutofillAnchor(GodotEditText editText, float[] anchor) {
+		View decor = getWindow().getDecorView();
+		if (decor.getWidth() <= 0 || decor.getHeight() <= 0) return;
+
+		ViewGroup.LayoutParams layout = editText.getLayoutParams();
+		if (!loginAutofillOriginalBoundsCaptured) {
+			loginAutofillOriginalBoundsCaptured = true;
+			loginAutofillOriginalWidth = layout.width;
+			loginAutofillOriginalHeight = layout.height;
+			loginAutofillOriginalX = editText.getX();
+			loginAutofillOriginalY = editText.getY();
+		}
+
+		int left = Math.round(anchor[0] * decor.getWidth());
+		int top = Math.round(anchor[1] * decor.getHeight());
+		int right = Math.round(anchor[2] * decor.getWidth());
+		int bottom = Math.round(anchor[3] * decor.getHeight());
+		layout.width = Math.max(1, right - left);
+		layout.height = Math.max(1, bottom - top);
+		editText.setLayoutParams(layout);
+		editText.setX(left);
+		editText.setY(top);
+	}
+
+	private void restoreGodotEditTextBounds(GodotEditText editText) {
+		if (!loginAutofillOriginalBoundsCaptured) return;
+		ViewGroup.LayoutParams layout = editText.getLayoutParams();
+		layout.width = loginAutofillOriginalWidth;
+		layout.height = loginAutofillOriginalHeight;
+		editText.setLayoutParams(layout);
+		editText.setX(loginAutofillOriginalX);
+		editText.setY(loginAutofillOriginalY);
+		loginAutofillOriginalBoundsCaptured = false;
+	}
+
+	private GodotEditText findGodotEditText(View view) {
+		if (view instanceof GodotEditText) {
+			return (GodotEditText) view;
+		}
+		if (!(view instanceof ViewGroup)) return null;
+
+		ViewGroup group = (ViewGroup) view;
+		for (int index = 0; index < group.getChildCount(); index++) {
+			GodotEditText result = findGodotEditText(group.getChildAt(index));
+			if (result != null) return result;
+		}
+		return null;
 	}
 
 	public String getGameDir() {

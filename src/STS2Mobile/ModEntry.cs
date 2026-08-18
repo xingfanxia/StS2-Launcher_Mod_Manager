@@ -282,7 +282,12 @@ public static class ModEntry
         PatchHelper.Log("Standalone launcher displayed");
         StartupPerformanceTracker.AdvanceTo(StartupStageId.LauncherReady);
         StartupPerformanceTracker.EndActive(StartupStageTerminal.Completed);
-        Callable.From(() => LauncherModel.GetGodotApp()?.Call("hideLoadingOverlay")).CallDeferred();
+        Callable
+            .From(() =>
+            {
+                LauncherModel.GetGodotApp()?.Call("hideLoadingOverlay");
+            })
+            .CallDeferred();
         StartupRecoveryBridge.MarkHealthy("standalone-ready");
     }
 }

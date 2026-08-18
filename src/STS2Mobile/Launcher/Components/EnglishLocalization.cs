@@ -330,6 +330,8 @@ internal static class EnglishLocalization
         (" · 모드", " · Modded"),
         ("앱 재시작 필요", "Restart required"),
         ("남은 파일", "files remaining"),
+        ("클라우드 정리 중", "Cleaning up cloud saves"),
+        ("클라우드 받는 중", "Downloading cloud saves"),
         ("클라우드 반영 중", "Updating Steam Cloud"),
         ("클라우드 동기화 중", "Syncing cloud saves"),
         ("권한을 허용한 뒤 다시 시도하세요", "Grant access, then try again"),

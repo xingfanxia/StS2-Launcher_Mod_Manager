@@ -104,6 +104,22 @@ void AuditPolicyFixtures()
         "launcher-authored policy fixture did not translate"
     );
     Check(
+        LocalizedTextPolicy.Render(
+            "클라우드 받는 중... 7/225",
+            useEnglish: true,
+            TextProvenance.LauncherAuthored
+        ) == "Downloading cloud saves... 7/225",
+        "dynamic cloud-pull progress did not translate"
+    );
+    Check(
+        LocalizedTextPolicy.Render(
+            "클라우드 정리 중... 3/20",
+            useEnglish: true,
+            TextProvenance.LauncherAuthored
+        ) == "Cleaning up cloud saves... 3/20",
+        "dynamic cloud-cleanup progress did not translate"
+    );
+    Check(
         LocalizedTextPolicy.Render(launcherKorean, useEnglish: true, TextProvenance.ExternalContent)
             == launcherKorean,
         "external text was rewritten even though it matched launcher copy"
