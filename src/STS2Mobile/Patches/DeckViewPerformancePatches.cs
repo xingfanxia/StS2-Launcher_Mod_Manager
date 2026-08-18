@@ -19,9 +19,14 @@ namespace STS2Mobile.Patches;
 public static class DeckViewPerformancePatches
 {
     private const string PileContentsChangedMethod = "OnPileContentsChanged";
-    private static WeakReference<NDeckViewScreen> _cachedScreen;
-    private static WeakReference<Player> _cachedPlayer;
-    private static readonly List<WeakReference<CardModel>> _cachedCards = new();
+
+    // These static field signatures must remain game-assembly-neutral. The same
+    // STS2Mobile.dll boots the standalone launcher before sts2.dll is downloaded;
+    // a closed generic over a game type makes Mono resolve sts2.dll while loading
+    // this type, before the game-patch block can fail open.
+    private static WeakReference<GodotObject> _cachedScreen;
+    private static WeakReference<object> _cachedPlayer;
+    private static readonly List<WeakReference<object>> _cachedCards = new();
     private static bool _invalidateAfterClose;
 
     public static void Apply(Harmony harmony)
@@ -80,9 +85,10 @@ public static class DeckViewPerformancePatches
 
         if (
             _cachedScreen == null
-            || !_cachedScreen.TryGetTarget(out NDeckViewScreen cached)
+            || !_cachedScreen.TryGetTarget(out GodotObject cachedObject)
+            || cachedObject is not NDeckViewScreen cached
             || _cachedPlayer == null
-            || !_cachedPlayer.TryGetTarget(out Player cachedPlayer)
+            || !_cachedPlayer.TryGetTarget(out object cachedPlayer)
         )
         {
             ClearCachedScreen(queueFree: true);
@@ -132,10 +138,11 @@ public static class DeckViewPerformancePatches
         // original method. Do not detach and reattach an unchanged cache.
         if (
             _cachedScreen != null
-            && _cachedScreen.TryGetTarget(out NDeckViewScreen cached)
+            && _cachedScreen.TryGetTarget(out GodotObject cachedObject)
+            && cachedObject is NDeckViewScreen cached
             && ReferenceEquals(cached, __result)
             && _cachedPlayer != null
-            && _cachedPlayer.TryGetTarget(out Player cachedPlayer)
+            && _cachedPlayer.TryGetTarget(out object cachedPlayer)
             && ReferenceEquals(cachedPlayer, player)
         )
         {
@@ -143,8 +150,8 @@ public static class DeckViewPerformancePatches
         }
 
         ClearCachedScreen(queueFree: true);
-        _cachedScreen = new WeakReference<NDeckViewScreen>(__result);
-        _cachedPlayer = new WeakReference<Player>(player);
+        _cachedScreen = new WeakReference<GodotObject>(__result);
+        _cachedPlayer = new WeakReference<object>(player);
         _invalidateAfterClose = false;
         __result.TreeExiting -= OnCachedScreenTreeExiting;
         __result.TreeExiting += OnCachedScreenTreeExiting;
@@ -158,7 +165,8 @@ public static class DeckViewPerformancePatches
 
         if (
             _cachedScreen == null
-            || !_cachedScreen.TryGetTarget(out NDeckViewScreen cached)
+            || !_cachedScreen.TryGetTarget(out GodotObject cachedObject)
+            || cachedObject is not NDeckViewScreen cached
             || !ReferenceEquals(__instance, cached)
         )
         {
@@ -202,7 +210,8 @@ public static class DeckViewPerformancePatches
         // or removing a card cannot add an invisible full-grid spike.
         if (
             _cachedScreen == null
-            || !_cachedScreen.TryGetTarget(out NDeckViewScreen cached)
+            || !_cachedScreen.TryGetTarget(out GodotObject cachedObject)
+            || cachedObject is not NDeckViewScreen cached
             || !ReferenceEquals(__instance, cached)
         )
         {
@@ -232,12 +241,19 @@ public static class DeckViewPerformancePatches
     internal static bool TryGetCachedScreenForDebug(Player player, out NDeckViewScreen screen)
     {
         screen = null;
-        return _cachedScreen != null
-            && _cachedScreen.TryGetTarget(out screen)
-            && screen != null
-            && GodotObject.IsInstanceValid(screen)
+        if (
+            _cachedScreen == null
+            || !_cachedScreen.TryGetTarget(out GodotObject cachedObject)
+            || cachedObject is not NDeckViewScreen cached
+        )
+        {
+            return false;
+        }
+
+        screen = cached;
+        return GodotObject.IsInstanceValid(screen)
             && _cachedPlayer != null
-            && _cachedPlayer.TryGetTarget(out Player cachedPlayer)
+            && _cachedPlayer.TryGetTarget(out object cachedPlayer)
             && ReferenceEquals(player, cachedPlayer);
     }
 
@@ -248,15 +264,15 @@ public static class DeckViewPerformancePatches
         {
             card.Upgraded -= OnCachedCardUpgraded;
             card.Upgraded += OnCachedCardUpgraded;
-            _cachedCards.Add(new WeakReference<CardModel>(card));
+            _cachedCards.Add(new WeakReference<object>(card));
         }
     }
 
     private static void DetachCachedCardSubscriptions()
     {
-        foreach (WeakReference<CardModel> weakCard in _cachedCards)
+        foreach (WeakReference<object> weakCard in _cachedCards)
         {
-            if (weakCard.TryGetTarget(out CardModel card))
+            if (weakCard.TryGetTarget(out object cachedObject) && cachedObject is CardModel card)
                 card.Upgraded -= OnCachedCardUpgraded;
         }
         _cachedCards.Clear();
@@ -266,7 +282,8 @@ public static class DeckViewPerformancePatches
     {
         if (
             _cachedScreen == null
-            || !_cachedScreen.TryGetTarget(out NDeckViewScreen cached)
+            || !_cachedScreen.TryGetTarget(out GodotObject cachedObject)
+            || cachedObject is not NDeckViewScreen cached
             || !GodotObject.IsInstanceValid(cached)
         )
         {
@@ -294,8 +311,10 @@ public static class DeckViewPerformancePatches
     private static void ClearCachedScreen(bool queueFree)
     {
         NDeckViewScreen cached = null;
-        if (_cachedScreen != null)
-            _cachedScreen.TryGetTarget(out cached);
+        if (_cachedScreen != null && _cachedScreen.TryGetTarget(out GodotObject cachedObject))
+        {
+            cached = cachedObject as NDeckViewScreen;
+        }
 
         _cachedScreen = null;
         _cachedPlayer = null;

@@ -11,6 +11,7 @@ PATCHER_DIR="$ROOT/src/STS2Mobile"
 BUILD_DIR="$ROOT/android"
 GRADLE_PROPS="$BUILD_DIR/gradle.properties"
 APK_DIR="$BUILD_DIR/build/outputs/apk/mono/release"
+EXPECTED_BOOTSTRAP_SHA256="0ae19844e9666b8ba8754d60430a2d26109808e31ebf1c51891c402a046ccbef"
 
 # 1. Format
 echo "Formatting C# code..."
@@ -68,7 +69,17 @@ else
     echo "Version: $CURRENT_NAME ($CURRENT_CODE) -> $NEW_NAME ($NEW_CODE)"
 fi
 
-# 4. Build APK
+# 4. Generate the deterministic fresh-install Godot project.
+echo "Generating fresh-install bootstrap..."
+python3 "$ROOT/scripts/make-bootstrap-pck.py"
+BOOTSTRAP_PCK="$BUILD_DIR/assets/bootstrap.pck"
+bootstrap_sha256="$(sha256sum "$BOOTSTRAP_PCK" | cut -d' ' -f1)"
+[ "$bootstrap_sha256" = "$EXPECTED_BOOTSTRAP_SHA256" ] || {
+    echo "ERROR: Unexpected bootstrap PCK: $bootstrap_sha256" >&2
+    exit 1
+}
+
+# 5. Build APK
 echo "Building APK..."
 cd "$BUILD_DIR"
 ./gradlew assembleMonoRelease
