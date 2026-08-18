@@ -117,8 +117,8 @@ jobs:
 
       - name: Build in the pinned container
         env:
-          APK_KEYSTORE_PASSWORD: ${{ secrets.APK_KEYSTORE_PASSWORD }}
-          APK_KEY_ALIAS: ${{ secrets.APK_KEY_ALIAS }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.APK_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.APK_KEY_ALIAS }}
           GHCR_TOKEN: ${{ github.token }}
           TOOLCHAIN_IMAGE: ${{ needs.toolchain.outputs.image }}
         run: |
