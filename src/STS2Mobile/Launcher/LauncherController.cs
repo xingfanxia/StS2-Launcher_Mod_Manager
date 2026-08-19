@@ -652,9 +652,6 @@ public class LauncherController
         _checkingForGameUpdate = false;
     }
 
-    private const string ReleasesPageUrl =
-        "https://github.com/iunius612/StS2-Launcher_Mod_Manager/releases/latest";
-
     private async void OnCheckLauncherUpdatePressed() =>
         await RunLauncherUpdateCheck(showLatestDialog: true);
 
@@ -713,7 +710,8 @@ public class LauncherController
                 if (showLatestDialog)
                     _view.ShowConfirmation(
                         "You're already on the latest launcher version.\n\nOpen the GitHub releases page anyway?",
-                        onConfirmed: () => OS.ShellOpen(ReleasesPageUrl),
+                        onConfirmed: () =>
+                            OS.ShellOpen(LauncherReleaseChannel.LatestReleasePageUrl),
                         onCancelled: null
                     );
             });
@@ -737,7 +735,7 @@ public class LauncherController
         {
             _view.ShowConfirmation(
                 $"Launcher v{result.LatestVersion} is available, but no APK asset was attached.\n\nOpen the GitHub releases page in a browser?",
-                onConfirmed: () => OS.ShellOpen(ReleasesPageUrl),
+                onConfirmed: () => OS.ShellOpen(LauncherReleaseChannel.LatestReleasePageUrl),
                 onCancelled: null
             );
             return;

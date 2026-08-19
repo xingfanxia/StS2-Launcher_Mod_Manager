@@ -9,9 +9,6 @@ namespace STS2Mobile.Steam;
 // latest GitHub release. Returns the download URL if an update is available.
 public static class AppUpdateChecker
 {
-    private const string ReleasesUrl =
-        "https://api.github.com/repos/iunius612/StS2-Launcher_Mod_Manager/releases/latest";
-
     public static async Task<AppUpdateResult> CheckAsync()
     {
         var currentVersion = GetInstalledVersion();
@@ -21,7 +18,8 @@ public static class AppUpdateChecker
         using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(15) };
         http.DefaultRequestHeaders.Add("User-Agent", "StS2-Launcher");
 
-        var response = await http.GetStringAsync(ReleasesUrl).ConfigureAwait(false);
+        var response = await http.GetStringAsync(LauncherReleaseChannel.LatestReleaseApiUrl)
+            .ConfigureAwait(false);
         using var doc = JsonDocument.Parse(response);
         var root = doc.RootElement;
 
@@ -65,11 +63,13 @@ public static class AppUpdateChecker
             foreach (var asset in assets.EnumerateArray())
             {
                 var name = asset.TryGetProperty("name", out var n) ? n.GetString() : null;
-                if (name != null && name.EndsWith(".apk", StringComparison.OrdinalIgnoreCase))
+                if (LauncherReleaseChannel.IsExpectedApkAsset(name, latestVersion))
                 {
-                    downloadUrl = asset.TryGetProperty("browser_download_url", out var url)
+                    var candidate = asset.TryGetProperty("browser_download_url", out var url)
                         ? url.GetString()
                         : null;
+                    if (LauncherReleaseChannel.IsExpectedDownloadUrl(candidate))
+                        downloadUrl = candidate;
                     break;
                 }
             }

@@ -72,6 +72,10 @@ public static class PatchAllResiliencePatches
     {
         if (__exception == null)
             return null;
+        ModRuntimeCompatibility.ObserveFailure(
+            __exception,
+            TryGetContainerType(__instance)?.Assembly
+        );
         if (!IsImportFailure(__exception))
             return __exception; // not our concern — rethrow unchanged
 
@@ -116,16 +120,21 @@ public static class PatchAllResiliencePatches
 
     private static string TryGetContainerName(object patchClassProcessor)
     {
+        return TryGetContainerType(patchClassProcessor)?.FullName ?? "<unknown>";
+    }
+
+    private static Type TryGetContainerType(object patchClassProcessor)
+    {
         try
         {
             var f = AccessTools.Field(patchClassProcessor?.GetType(), "containerType");
             if (f?.GetValue(patchClassProcessor) is Type t)
-                return t.FullName ?? t.Name;
+                return t;
         }
         catch
         {
             // best-effort
         }
-        return "<unknown>";
+        return null;
     }
 }

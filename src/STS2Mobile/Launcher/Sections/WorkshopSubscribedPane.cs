@@ -144,14 +144,18 @@ public class WorkshopSubscribedPane : VBoxContainer
 
         _lastSyncTick = System.Environment.TickCount64;
         var toDownload = plan.ToInstall.Concat(plan.ToUpdate).ToList();
+
+        // Publish the plan snapshot BEFORE Enqueue starts a worker. A tiny mod can
+        // finish immediately; assigning ToUpdate after that completion would
+        // resurrect the stale badge after the queue event had already cleared it.
+        _updateAvailablePfids = new HashSet<ulong>(plan.ToUpdate.Select(i => i.PublishedFileId));
+        _disabledUpdatesByPfid = plan.DisabledUpdates.ToDictionary(i => i.PublishedFileId, i => i);
+        _conflicts = plan.Conflicts;
         if (_queue != null)
         {
             foreach (var item in toDownload)
                 _queue.Enqueue(item);
         }
-        _updateAvailablePfids = new HashSet<ulong>(plan.ToUpdate.Select(i => i.PublishedFileId));
-        _disabledUpdatesByPfid = plan.DisabledUpdates.ToDictionary(i => i.PublishedFileId, i => i);
-        _conflicts = plan.Conflicts;
 
         // Tell the user what auto-download just started (issue #58): a scrollable
         // list of the new/updated mods, queued to the Downloads tab.
@@ -254,6 +258,51 @@ public class WorkshopSubscribedPane : VBoxContainer
 
     // Must run on the main thread. Also called by ModManagerSection on queue
     // Changed events while this tab is visible, to reflect live download progress.
+    public void NotifyQueueChanged(bool queueIdle)
+    {
+        if (queueIdle)
+            ReconcileCompletedUpdates();
+        if (Visible)
+            RenderList();
+    }
+
+    // The subscription plan is a snapshot taken before downloads start. Queue
+    // completion can happen while DOWNLOADS (or another tab) is visible, so the
+    // old ToUpdate PFIDs must be retired independently of SUBSCRIBED rendering.
+    // Only clear after the installer's revision is confirmed in the atomically
+    // persisted registry; a false Completed signal can therefore never hide a
+    // still-pending update.
+    private void ReconcileCompletedUpdates()
+    {
+        var completed = (_queue?.Entries ?? Array.Empty<WorkshopDownloadEntry>())
+            .Where(e => e.State == WorkshopDownloadState.Completed && e.Item != null)
+            .ToList();
+        if (completed.Count == 0)
+            return;
+
+        var cfg = ModConfig.Load();
+        int cleared = 0;
+        foreach (var queueEntry in completed)
+        {
+            var persisted = cfg.Mods.FirstOrDefault(e =>
+                e.IsWorkshop && e.PublishedFileId == queueEntry.Item.PublishedFileId
+            );
+            if (
+                persisted == null
+                || persisted.TimeUpdated < queueEntry.Item.TimeUpdated
+                || queueEntry.Item.TimeUpdated <= 0
+            )
+                continue;
+
+            if (_updateAvailablePfids.Remove(queueEntry.Item.PublishedFileId))
+                cleared++;
+            _disabledUpdatesByPfid.Remove(queueEntry.Item.PublishedFileId);
+        }
+
+        if (cleared > 0)
+            PatchHelper.Log($"[Workshop] Cleared {cleared} completed update badge(s)");
+    }
+
     public void RenderList()
     {
         ClearList();
@@ -409,7 +458,14 @@ public class WorkshopSubscribedPane : VBoxContainer
                     : Loc.Tr("비활성", "Disabled");
                 statusColor = Ui.TextDisabled;
             }
-            else if (_updateAvailablePfids.Contains(entry.PublishedFileId))
+            else if (
+                WorkshopUpdateStatus.ShouldShowUpdateAvailable(
+                    _updateAvailablePfids.Contains(entry.PublishedFileId),
+                    entry.TimeUpdated,
+                    qEntry?.State == WorkshopDownloadState.Completed,
+                    qEntry?.Item?.TimeUpdated ?? 0
+                )
+            )
             {
                 status = Loc.Tr("업데이트 있음", "Update available");
                 statusColor = Ui.Warn;

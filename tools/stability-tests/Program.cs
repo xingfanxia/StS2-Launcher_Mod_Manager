@@ -8,18 +8,187 @@ Directory.CreateDirectory(root);
 try
 {
     Run(
+        "completed Workshop installs clear stale update badges",
+        () =>
+        {
+            Assert(
+                WorkshopUpdateStatus.ShouldShowUpdateAvailable(
+                    plannedAsUpdate: true,
+                    installedTimeUpdated: 100,
+                    downloadCompleted: false,
+                    downloadedTimeUpdated: 200
+                ),
+                "an unfinished planned update disappeared early"
+            );
+            Assert(
+                !WorkshopUpdateStatus.ShouldShowUpdateAvailable(
+                    plannedAsUpdate: true,
+                    installedTimeUpdated: 200,
+                    downloadCompleted: true,
+                    downloadedTimeUpdated: 200
+                ),
+                "a completed, persisted update kept the stale Update available badge"
+            );
+            Assert(
+                WorkshopUpdateStatus.ShouldShowUpdateAvailable(
+                    plannedAsUpdate: true,
+                    installedTimeUpdated: 100,
+                    downloadCompleted: true,
+                    downloadedTimeUpdated: 200
+                ),
+                "a queue completion without a persisted registry revision hid a real update"
+            );
+
+            var repository = FindRepositoryRoot();
+            var manager = File.ReadAllText(
+                Path.Combine(
+                    repository,
+                    "src",
+                    "STS2Mobile",
+                    "Launcher",
+                    "Sections",
+                    "ModManagerSection.cs"
+                )
+            );
+            var subscribed = File.ReadAllText(
+                Path.Combine(
+                    repository,
+                    "src",
+                    "STS2Mobile",
+                    "Launcher",
+                    "Sections",
+                    "WorkshopSubscribedPane.cs"
+                )
+            );
+            var snapshotPublish = subscribed.IndexOf(
+                "_updateAvailablePfids = new HashSet<ulong>",
+                StringComparison.Ordinal
+            );
+            var firstEnqueue = subscribed.IndexOf("_queue.Enqueue(item)", StringComparison.Ordinal);
+            Assert(
+                manager.Contains(
+                    "_subscribedPane.NotifyQueueChanged(queueIdle: !busy)",
+                    StringComparison.Ordinal
+                )
+                    && subscribed.Contains(
+                        "private void ReconcileCompletedUpdates()",
+                        StringComparison.Ordinal
+                    )
+                    && subscribed.Contains(
+                        "persisted.TimeUpdated < queueEntry.Item.TimeUpdated",
+                        StringComparison.Ordinal
+                    )
+                    && snapshotPublish >= 0
+                    && firstEnqueue >= 0
+                    && snapshotPublish < firstEnqueue,
+                "hidden SUBSCRIBED state was not reconciled when DOWNLOADS became idle"
+            );
+        }
+    );
+
+    Run(
+        "launcher self-update uses this fork and only its exact signed APK name",
+        () =>
+        {
+            Assert(
+                LauncherReleaseChannel.LatestReleaseApiUrl.Contains(
+                    "xingfanxia/StS2-Launcher_Mod_Manager",
+                    StringComparison.Ordinal
+                ),
+                "automatic update checks still target upstream instead of this fork"
+            );
+            Assert(
+                LauncherReleaseChannel.IsExpectedApkAsset("StS2Launcher-v0.4.6.apk", "0.4.6"),
+                "the canonical release APK was rejected"
+            );
+            Assert(
+                !LauncherReleaseChannel.IsExpectedApkAsset("StS2Launcher-v0.4.6-debug.apk", "0.4.6")
+                    && !LauncherReleaseChannel.IsExpectedApkAsset("another-launcher.apk", "0.4.6")
+                    && !LauncherReleaseChannel.IsExpectedApkAsset(
+                        "StS2Launcher-v0.4.6.apk.sha256",
+                        "0.4.6"
+                    ),
+                "an unrelated/debug/checksum asset crossed the APK install boundary"
+            );
+            Assert(
+                LauncherReleaseChannel.IsExpectedDownloadUrl(
+                    "https://github.com/xingfanxia/StS2-Launcher_Mod_Manager/releases/download/v0.4.6/StS2Launcher-v0.4.6.apk"
+                )
+                    && !LauncherReleaseChannel.IsExpectedDownloadUrl(
+                        "https://example.com/StS2Launcher-v0.4.6.apk"
+                    )
+                    && !LauncherReleaseChannel.IsExpectedDownloadUrl(
+                        "http://github.com/xingfanxia/StS2-Launcher_Mod_Manager/releases/download/v0.4.6/StS2Launcher-v0.4.6.apk"
+                    ),
+                "a non-HTTPS or non-fork download URL crossed the update boundary"
+            );
+        }
+    );
+
+    Run(
+        "Mono-invalid mod IL is attributed and quarantined without rewriting third-party DLLs",
+        () =>
+        {
+            var repository = FindRepositoryRoot();
+            var loaderPatch = File.ReadAllText(
+                Path.Combine(repository, "src", "STS2Mobile", "Patches", "ModLoaderPatches.cs")
+            );
+            var compatibility = File.ReadAllText(
+                Path.Combine(
+                    repository,
+                    "src",
+                    "STS2Mobile",
+                    "Patches",
+                    "ModRuntimeCompatibility.cs"
+                )
+            );
+            var android = File.ReadAllText(
+                Path.Combine(
+                    repository,
+                    "android",
+                    "src",
+                    "com",
+                    "game",
+                    "sts2launcher",
+                    "modmanager",
+                    "GodotApp.java"
+                )
+            );
+            Assert(
+                loaderPatch.Contains(
+                    "nameof(CallModInitializerTranspiler)",
+                    StringComparison.Ordinal
+                )
+                    && loaderPatch.Contains("nameof(MethodBase.Invoke)", StringComparison.Ordinal)
+                    && loaderPatch.Contains(
+                        "ModRuntimeCompatibility.IsIncompatible(mod.assembly)",
+                        StringComparison.Ordinal
+                    )
+                    && compatibility.Contains("InvalidProgramException", StringComparison.Ordinal)
+                    && compatibility.Contains("return method.Invoke", StringComparison.Ordinal)
+                    && compatibility.Contains("throw;", StringComparison.Ordinal)
+                    && compatibility.Contains(
+                        "ModAssemblyRegistry.IsModAssembly",
+                        StringComparison.Ordinal
+                    )
+                    && !compatibility.Contains("LoadFromStream", StringComparison.Ordinal)
+                    && android.Contains(
+                        "showModRuntimeCompatibilityNotice",
+                        StringComparison.Ordinal
+                    )
+                    && !android.Contains("sts2_mod_compat", StringComparison.Ordinal),
+                "Mono-invalid mod quarantine changed DLL bytes or lost the initializer boundary"
+            );
+        }
+    );
+
+    Run(
         "Steam cloud enumeration requests content hashes",
         () =>
         {
             var repository = FindRepositoryRoot();
             var cache = File.ReadAllText(
-                Path.Combine(
-                    repository,
-                    "src",
-                    "STS2Mobile",
-                    "Steam",
-                    "CloudFileCache.cs"
-                )
+                Path.Combine(repository, "src", "STS2Mobile", "Steam", "CloudFileCache.cs")
             );
 
             Assert(
@@ -34,17 +203,11 @@ try
         () =>
         {
             Assert(
-                CloudContentHash.Matches(
-                    "A9993E364706816ABA3E25717850C26C9CD0D89D",
-                    "abc"
-                ),
+                CloudContentHash.Matches("A9993E364706816ABA3E25717850C26C9CD0D89D", "abc"),
                 "SHA-1 matching must be case-insensitive"
             );
             Assert(
-                CloudContentHash.Matches(
-                    "sha1:a9993e364706816aba3e25717850c26c9cd0d89d",
-                    "abc"
-                ),
+                CloudContentHash.Matches("sha1:a9993e364706816aba3e25717850c26c9cd0d89d", "abc"),
                 "Steam SHA-1 prefixes must be accepted"
             );
             Assert(
@@ -52,17 +215,11 @@ try
                 "20-byte Base64 manifest hashes must be accepted"
             );
             Assert(
-                CloudContentHash.Matches(
-                    "da39a3ee5e6b4b0d3255bfef95601890afd80709",
-                    ""
-                ),
+                CloudContentHash.Matches("da39a3ee5e6b4b0d3255bfef95601890afd80709", ""),
                 "empty saves must use the canonical raw-content SHA-1"
             );
             Assert(
-                !CloudContentHash.Matches(
-                    "a9993e364706816aba3e25717850c26c9cd0d89d",
-                    "changed"
-                ),
+                !CloudContentHash.Matches("a9993e364706816aba3e25717850c26c9cd0d89d", "changed"),
                 "changed content must not be skipped"
             );
             Assert(
@@ -179,8 +336,14 @@ try
                     && android.Contains("positionLoginAutofillAnchor", StringComparison.Ordinal)
                     && android.Contains("editText.setX(left)", StringComparison.Ordinal)
                     && android.Contains("editText.setY(top)", StringComparison.Ordinal)
-                    && android.Contains("onWindowFocusChanged(boolean hasFocus)", StringComparison.Ordinal)
-                    && android.Contains("restoreGodotEditTextBounds(editText)", StringComparison.Ordinal)
+                    && android.Contains(
+                        "onWindowFocusChanged(boolean hasFocus)",
+                        StringComparison.Ordinal
+                    )
+                    && android.Contains(
+                        "restoreGodotEditTextBounds(editText)",
+                        StringComparison.Ordinal
+                    )
                     && android.Contains("editText.clearFocus()", StringComparison.Ordinal)
                     && android.Contains("requestAutofill(editText)", StringComparison.Ordinal),
                 "the Android bridge must annotate Godot's existing native editor"
@@ -222,7 +385,10 @@ try
                     && login.Contains("field.GuiInput", StringComparison.Ordinal)
                     && login.Contains("InputEventScreenTouch", StringComparison.Ordinal)
                     && login.Contains("VisibilityChanged", StringComparison.Ordinal)
-                    && !login.Contains("FocusExited += AndroidLoginAutofillBridge.Clear", StringComparison.Ordinal),
+                    && !login.Contains(
+                        "FocusExited += AndroidLoginAutofillBridge.Clear",
+                        StringComparison.Ordinal
+                    ),
                 "both login fields must request on focus and retry taps without cancelling provider UI"
             );
         }
@@ -707,10 +873,7 @@ try
                 "performance telemetry must remain bounded and free of hot-path file writes"
             );
             Assert(
-                tracker.Contains(
-                    "[StartupPerformance/Summary]",
-                    StringComparison.Ordinal
-                )
+                tracker.Contains("[StartupPerformance/Summary]", StringComparison.Ordinal)
                     && tracker.Contains("EncodeTerminalDurations()", StringComparison.Ordinal)
                     && androidApp.Contains(
                         "[StartupPerformance/NativeSummary]",
@@ -802,10 +965,7 @@ try
             Assert(
                 overlay.Contains("BeginMainThreadHandoff", StringComparison.Ordinal)
                     && overlay.Contains("PublishNativeSnapshot", StringComparison.Ordinal)
-                    && overlay.Contains(
-                        "\"showManagedStartupProgress\"",
-                        StringComparison.Ordinal
-                    )
+                    && overlay.Contains("\"showManagedStartupProgress\"", StringComparison.Ordinal)
                     && androidApp.Contains(
                         "public void showManagedStartupProgress(",
                         StringComparison.Ordinal
@@ -816,10 +976,7 @@ try
                     )
                     && tracker.Contains("TotalElapsedUsec", StringComparison.Ordinal)
                     && tracker.Contains("_postPlaySinceUsec", StringComparison.Ordinal)
-                    && overlay.Contains(
-                        "Loc.Tr(\"단계 \", \"Stage \")",
-                        StringComparison.Ordinal
-                    )
+                    && overlay.Contains("Loc.Tr(\"단계 \", \"Stage \")", StringComparison.Ordinal)
                     && overlay.Contains(
                         "Loc.Tr(\" · 전체 \", \" · Total \")",
                         StringComparison.Ordinal
@@ -858,14 +1015,8 @@ try
                 "PLAY wait and owned startup work must have distinct real boundaries"
             );
             Assert(
-                coveredLogoPatches.Contains(
-                    "AccessTools.DeclaredMethod(",
-                    StringComparison.Ordinal
-                )
-                    && coveredLogoPatches.Contains(
-                        "\"LaunchMainMenu\"",
-                        StringComparison.Ordinal
-                    )
+                coveredLogoPatches.Contains("AccessTools.DeclaredMethod(", StringComparison.Ordinal)
+                    && coveredLogoPatches.Contains("\"LaunchMainMenu\"", StringComparison.Ordinal)
                     && coveredLogoPatches.Contains(
                         "new[] { typeof(bool) }",
                         StringComparison.Ordinal
@@ -896,10 +1047,7 @@ try
                 "the first post-PLAY stage must be published before synchronous game settings work"
             );
             Assert(
-                androidApp.Contains(
-                    "debug_startup_stage_delay_seconds",
-                    StringComparison.Ordinal
-                )
+                androidApp.Contains("debug_startup_stage_delay_seconds", StringComparison.Ordinal)
                     && androidApp.Contains(
                         "consumeDebugStartupStageDelaySeconds",
                         StringComparison.Ordinal
@@ -1082,10 +1230,7 @@ try
                         StringComparison.Ordinal
                     )
                     && probe.Contains("game-menu-idle", StringComparison.Ordinal)
-                    && probe.Contains(
-                        "ShouldAutoContinueRecoverySession",
-                        StringComparison.Ordinal
-                    )
+                    && probe.Contains("ShouldAutoContinueRecoverySession", StringComparison.Ordinal)
                     && recoveryFlow.Contains(
                         "debug capture continuing session automatically",
                         StringComparison.Ordinal
@@ -1094,10 +1239,7 @@ try
             );
             Assert(
                 android.Contains("\"game-baseline-120\"", StringComparison.Ordinal)
-                    && android.Contains(
-                        "\"game-baseline-safe-120\"",
-                        StringComparison.Ordinal
-                    )
+                    && android.Contains("\"game-baseline-safe-120\"", StringComparison.Ordinal)
                     && android.Contains(
                         "STS2_DISABLE_GAMEPLAY_PERFORMANCE_FIXES",
                         StringComparison.Ordinal
@@ -1128,10 +1270,10 @@ try
             );
             Assert(
                 modEntry.IndexOf("ModAssemblyRegistry.Install()", StringComparison.Ordinal)
-                        < modEntry.IndexOf(
-                            "QuickRestartPerformanceCompatPatches.Install(_harmony)",
-                            StringComparison.Ordinal
-                        )
+                    < modEntry.IndexOf(
+                        "QuickRestartPerformanceCompatPatches.Install(_harmony)",
+                        StringComparison.Ordinal
+                    )
                     && quickRestartCompat.Contains(
                         "ModAssemblyRegistry.IsModAssembly(assembly)",
                         StringComparison.Ordinal
@@ -1140,13 +1282,19 @@ try
                         "assembly.ManifestModule.ModuleVersionId",
                         StringComparison.Ordinal
                     )
-                    && quickRestartCompat.Contains("SHA256.HashData(stream)", StringComparison.Ordinal)
+                    && quickRestartCompat.Contains(
+                        "SHA256.HashData(stream)",
+                        StringComparison.Ordinal
+                    )
                     && quickRestartCompat.Contains(
                         "BindingFlags.DeclaredOnly",
                         StringComparison.Ordinal
                     )
                     && quickRestartCompat.Contains("_attempted", StringComparison.Ordinal)
-                    && quickRestartCompat.Contains("TryRemoveLifecyclePatches", StringComparison.Ordinal)
+                    && quickRestartCompat.Contains(
+                        "TryRemoveLifecyclePatches",
+                        StringComparison.Ordinal
+                    )
                     && quickRestartCompat.Contains("fail-open", StringComparison.Ordinal),
                 "Quick Restart compatibility must load late, patch once, and fail open on exact-target mismatch"
             );
@@ -1183,10 +1331,7 @@ try
                         "game-quickrestart-baseline-partition-120",
                         StringComparison.Ordinal
                     )
-                    && probe.Contains(
-                        "game-quickrestart-partition-120",
-                        StringComparison.Ordinal
-                    ),
+                    && probe.Contains("game-quickrestart-partition-120", StringComparison.Ordinal),
                 "Quick Restart A/B and per-method wrappers must remain explicit debug-only instrumentation"
             );
             Assert(
@@ -1318,7 +1463,10 @@ try
                 "a hidden cached deck must be invalidated without rebuilding its card grid"
             );
             Assert(
-                deckViewCache.Contains("card.Upgraded += OnCachedCardUpgraded", StringComparison.Ordinal)
+                deckViewCache.Contains(
+                    "card.Upgraded += OnCachedCardUpgraded",
+                    StringComparison.Ordinal
+                )
                     && deckViewCache.Contains(
                         "card.Upgraded -= OnCachedCardUpgraded",
                         StringComparison.Ordinal
@@ -1336,10 +1484,7 @@ try
                 "card upgrades and run-tree teardown must invalidate the retained deck without leaking subscriptions"
             );
             Assert(
-                android.Contains(
-                    "consumeDebugDeckCacheMutationProbe()",
-                    StringComparison.Ordinal
-                )
+                android.Contains("consumeDebugDeckCacheMutationProbe()", StringComparison.Ordinal)
                     && android.Contains(
                         "intent.removeExtra(\"debug_deck_cache_mutation_probe\")",
                         StringComparison.Ordinal
@@ -1352,8 +1497,14 @@ try
                         "DebugFrameTimeProbe.IsGameCaptureActive",
                         StringComparison.Ordinal
                     )
-                    && deckMutationProbe.Contains("player.Deck.AddInternal", StringComparison.Ordinal)
-                    && deckMutationProbe.Contains("player.Deck.RemoveInternal", StringComparison.Ordinal)
+                    && deckMutationProbe.Contains(
+                        "player.Deck.AddInternal",
+                        StringComparison.Ordinal
+                    )
+                    && deckMutationProbe.Contains(
+                        "player.Deck.RemoveInternal",
+                        StringComparison.Ordinal
+                    )
                     && deckMutationProbe.Contains("UpgradeInternal()", StringComparison.Ordinal)
                     && deckMutationProbe.Contains("DowngradeInternal()", StringComparison.Ordinal)
                     && deckMutationProbe.Contains("finally", StringComparison.Ordinal)
@@ -1400,10 +1551,7 @@ try
                     && probe.Contains("game-partition-120", StringComparison.Ordinal)
                     && probe.Contains("game-menu-partition-60", StringComparison.Ordinal)
                     && probe.Contains("game-safe-300", StringComparison.Ordinal)
-                    && probe.Contains(
-                        "ExtendedCaptureUsec = 300_000_000",
-                        StringComparison.Ordinal
-                    )
+                    && probe.Contains("ExtendedCaptureUsec = 300_000_000", StringComparison.Ordinal)
                     && android.Contains("markDebugFrameSpike", StringComparison.Ordinal),
                 "mod comparisons and trace markers must stay behind the debug bridge"
             );
@@ -2417,9 +2565,7 @@ try
                 "the touch-swallowing native startup overlay must be hidden once launcher UI is ready"
             );
             Assert(
-                recoveryResolved >= 0
-                    && playReady > recoveryResolved
-                    && playReady < playWait,
+                recoveryResolved >= 0 && playReady > recoveryResolved && playReady < playWait,
                 "PLAY readiness must be reported only after recovery resolves and before input wait"
             );
         }

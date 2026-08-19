@@ -1,5 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Reflection;
+using System.Reflection.Emit;
 using System.Threading.Tasks;
 using Godot;
 using HarmonyLib;
@@ -37,6 +40,15 @@ public static class ModLoaderPatches
             "TryLoadMod",
             prefix: PatchHelper.Method(typeof(ModLoaderPatches), nameof(TryLoadModPrefix)),
             postfix: PatchHelper.Method(typeof(ModLoaderPatches), nameof(TryLoadModPostfix))
+        );
+        PatchHelper.Patch(
+            harmony,
+            typeof(ModManager),
+            "CallModInitializer",
+            transpiler: PatchHelper.Method(
+                typeof(ModLoaderPatches),
+                nameof(CallModInitializerTranspiler)
+            )
         );
         PatchHelper.Patch(
             harmony,
@@ -137,6 +149,17 @@ public static class ModLoaderPatches
 
     public static void TryLoadModPostfix(Mod mod)
     {
+        if (
+            mod?.state == ModLoadState.Loaded
+            && ModRuntimeCompatibility.IsIncompatible(mod.assembly)
+        )
+        {
+            mod.state = ModLoadState.Failed;
+            PatchHelper.Log(
+                $"[ModCompat] Marked mod '{mod.manifest?.id}' failed for this run after "
+                    + "Mono rejected its initializer IL"
+            );
+        }
         bool loaded = mod?.state == ModLoadState.Loaded;
         DebugModLoadTimingPatches.EndMod(loaded);
         if (string.IsNullOrWhiteSpace(mod?.manifest?.id))
@@ -147,6 +170,56 @@ public static class ModLoaderPatches
             StartupStageId.ModDiscovery,
             loaded ? StartupStageTerminal.Completed : StartupStageTerminal.Degraded
         );
+    }
+
+    // The game catches initializer exceptions inside CallModInitializer, so the
+    // outer TryLoadMod postfix cannot see why a DLL failed. Wrap the one reflection
+    // invocation without changing its return/throw behavior. The wrapper attributes
+    // InvalidProgramException to the exact mod class so the postfix can keep a
+    // partially initialized assembly out of GetLoadedMods().
+    public static IEnumerable<CodeInstruction> CallModInitializerTranspiler(
+        IEnumerable<CodeInstruction> instructions
+    )
+    {
+        var codes = new List<CodeInstruction>(instructions);
+        var original = AccessTools.Method(
+            typeof(MethodBase),
+            nameof(MethodBase.Invoke),
+            new[] { typeof(object), typeof(object[]) }
+        );
+        var replacement = AccessTools.Method(
+            typeof(ModRuntimeCompatibility),
+            nameof(ModRuntimeCompatibility.InvokeInitializer)
+        );
+        if (original == null || replacement == null)
+        {
+            PatchHelper.Log(
+                "[ModCompat] Initializer invocation contract unavailable; fallback inactive"
+            );
+            return codes;
+        }
+
+        var matches = new List<int>();
+        for (int i = 0; i < codes.Count; i++)
+        {
+            if (codes[i].operand is MethodInfo method && method == original)
+                matches.Add(i);
+        }
+
+        if (matches.Count != 1)
+        {
+            PatchHelper.Log(
+                $"[ModCompat] Expected one initializer invocation, found {matches.Count}; "
+                    + "fallback inactive"
+            );
+            return codes;
+        }
+
+        var call = codes[matches[0]];
+        call.opcode = OpCodes.Call;
+        call.operand = replacement;
+        PatchHelper.Log("[ModCompat] Mod initializer compatibility boundary installed");
+        return codes;
     }
 
     // Skip the Steam-backed mod enumeration on Android (no Steamworks runtime).

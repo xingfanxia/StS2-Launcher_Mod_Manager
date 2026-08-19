@@ -509,8 +509,7 @@ public class ModManagerSection : VBoxContainer
             .From(() =>
             {
                 _downloadsPane.RenderFromQueue();
-                if (_subscribedPane.Visible)
-                    _subscribedPane.RenderList();
+                _subscribedPane.NotifyQueueChanged(queueIdle: !busy);
                 if (_workshopPane.Visible)
                     _workshopPane.NotifyInstallsChanged();
             })

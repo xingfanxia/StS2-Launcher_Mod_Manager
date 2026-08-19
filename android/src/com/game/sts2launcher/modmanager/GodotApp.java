@@ -304,6 +304,22 @@ public class GodotApp extends GodotActivity {
 		}
 	}
 
+	public void showModRuntimeCompatibilityNotice(String modName) {
+		String safeName = modName == null ? "mod" : modName.trim();
+		safeName = safeName.replace('\r', '_').replace('\n', '_').replace('\t', '_');
+		if (safeName.isEmpty()) safeName = "mod";
+		if (safeName.length() > 96) safeName = safeName.substring(0, 96);
+		String displayName = safeName;
+		runOnUiThread(() -> Toast.makeText(
+				this,
+				nativeText(
+						"'" + displayName + "' 모드의 DLL은 Android 런타임과 호환되지 않습니다. "
+								+ "모드를 업데이트하거나 비활성화하세요.",
+						"The '" + displayName + "' mod DLL is not compatible with the Android "
+								+ "runtime. Update or disable the mod."),
+				Toast.LENGTH_LONG).show());
+	}
+
 	// Reads `--es debug_force_*` intent extras from `adb shell am start` and
 	// drops marker files into getFilesDir(). The C# side polls these on its
 	// first-UI hook and routes them to the matching dialog handler. Used by

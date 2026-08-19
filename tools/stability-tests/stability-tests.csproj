@@ -62,5 +62,13 @@
       Include="../../src/STS2Mobile/Steam/CloudContentHash.cs"
       Link="CloudContentHash.cs"
     />
+    <Compile
+      Include="../../src/STS2Mobile/Steam/WorkshopUpdateStatus.cs"
+      Link="WorkshopUpdateStatus.cs"
+    />
+    <Compile
+      Include="../../src/STS2Mobile/Steam/LauncherReleaseChannel.cs"
+      Link="LauncherReleaseChannel.cs"
+    />
   </ItemGroup>
 </Project>

@@ -9,6 +9,8 @@ required	method	MegaCrit.Sts2.Core.Saves.SaveManager	ConstructDefault	bare	-
 required	method	MegaCrit.Sts2.Core.Saves.SaveManager	InitSettingsData	bare	-
 required	method	MegaCrit.Sts2.Core.Modding.ModManager	Initialize	bare	-
 required	method	MegaCrit.Sts2.Core.Modding.ModManager	TryLoadMod	bare	-
+required	method	MegaCrit.Sts2.Core.Modding.ModManager	CallModInitializer	bare	-
+required	il-call	MegaCrit.Sts2.Core.Modding.ModManager	CallModInitializer	1	System.Reflection.MethodBase::Invoke
 required	method	MegaCrit.Sts2.Core.Modding.ModManager	ReadSteamMods	bare	-
 required	method	MegaCrit.Sts2.Core.Modding.ModManager	ReadModManifest	bare	-
 required	method	MegaCrit.Sts2.Core.Platform.Null.NullPlatformUtilStrategy	GetRawLanguage	bare	-
