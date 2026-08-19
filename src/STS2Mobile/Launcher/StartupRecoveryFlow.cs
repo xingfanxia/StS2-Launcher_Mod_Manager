@@ -122,13 +122,21 @@ internal static class StartupRecoveryFlow
                 $"recovery mode with candidate '{plan.Candidate}' excluded",
             _ => $"test mode with {plan.SelectedModCount}/{plan.TotalModCount} mods selected",
         };
+        var sessionZh = plan.Action switch
+        {
+            RecoveryAction.SafeMode => "不加载第三方 mod 的安全模式",
+            RecoveryAction.ExcludeCandidate => $"排除候选 mod“{plan.Candidate}”的恢复模式",
+            _ => $"仅加载 {plan.SelectedModCount}/{plan.TotalModCount} 个 mod 的测试模式",
+        };
         var completion = new DialogCompletion<bool>(false);
         var dialog = new StyledDialog(
             Loc.Tr(
                 $"{sessionKo}로 메뉴에 도달했습니다.\n\n"
                     + "실제 mod 폴더와 설정은 변경되지 않았습니다. 지금 일반 모드로 재시작하거나 이 세션을 계속할 수 있습니다.",
                 $"The game reached the menu in {sessionEn}.\n\n"
-                    + "Your real mod folders and settings were not changed. Restart normally now, or continue this session."
+                    + "Your real mod folders and settings were not changed. Restart normally now, or continue this session.",
+                $"游戏已通过{sessionZh}进入主菜单。\n\n"
+                    + "实际 mod 文件夹和设置均未更改。你可以立即以普通模式重启，或继续本次运行。"
             ),
             LauncherUI.ResolveScale(gameNode),
             okLabel: Loc.Tr("일반 모드로 재시작", "Restart normally"),

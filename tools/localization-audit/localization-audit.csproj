@@ -19,6 +19,14 @@
       Link="EnglishLocalization.cs"
     />
     <Compile
+      Include="../../src/STS2Mobile/Launcher/Components/SimplifiedChineseLocalization.cs"
+      Link="SimplifiedChineseLocalization.cs"
+    />
+    <Compile
+      Include="../../src/STS2Mobile/Launcher/Components/LauncherLanguage.cs"
+      Link="LauncherLanguage.cs"
+    />
+    <Compile
       Include="../../src/STS2Mobile/Launcher/Components/LocalizedTextPolicy.cs"
       Link="LocalizedTextPolicy.cs"
     />

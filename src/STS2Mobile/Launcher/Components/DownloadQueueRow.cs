@@ -36,7 +36,7 @@ public class DownloadQueueRow : PanelContainer
             _ => entry.State.ToString(),
         };
         var statusLabel = new StyledLabel(
-            statusText,
+            Loc.Authored(statusText),
             scale,
             fontSize: 12,
             align: HorizontalAlignment.Left,

@@ -105,6 +105,7 @@ public class GodotApp extends GodotActivity {
 	private volatile boolean warmupLowMemory;
 	private volatile int warmupTrimLevel;
 	private volatile boolean debugWarmupPressure;
+	private volatile boolean debugAtlasOverlayPreview;
 	private volatile String debugNativeCrashStage = "";
 	private volatile String debugFrameProbe = "";
 	private volatile boolean debugModSafeMode;
@@ -268,7 +269,7 @@ public class GodotApp extends GodotActivity {
 		startStagedAtlasCleanup();
 
 		try {
-			showStartupOverlay(wipingAtlas);
+			showStartupOverlay(wipingAtlas || debugAtlasOverlayPreview);
 		} catch (Exception ex) {
 			Log.e(TAG, "[StartupPerformance] native overlay degraded", ex);
 		} finally {
@@ -316,7 +317,9 @@ public class GodotApp extends GodotActivity {
 						"'" + displayName + "' 모드의 DLL은 Android 런타임과 호환되지 않습니다. "
 								+ "모드를 업데이트하거나 비활성화하세요.",
 						"The '" + displayName + "' mod DLL is not compatible with the Android "
-								+ "runtime. Update or disable the mod."),
+								+ "runtime. Update or disable the mod.",
+						"mod“" + displayName + "”的 DLL 与 Android 运行时不兼容。"
+								+ "请更新或禁用该 mod。"),
 				Toast.LENGTH_LONG).show());
 	}
 
@@ -335,6 +338,15 @@ public class GodotApp extends GodotActivity {
 			return;
 		}
 		try {
+			// Safe QA surface proof: reuse the exact production atlas-rebuild copy
+			// and layout without writing a wipe marker or touching derived caches.
+			// handleDebugIntents itself is reachable only from a -debug suffix.
+			debugAtlasOverlayPreview =
+					"1".equals(intent.getStringExtra("debug_preview_atlas_overlay"));
+			intent.removeExtra("debug_preview_atlas_overlay");
+			if (debugAtlasOverlayPreview) {
+				Log.i(TAG, "[Diag] atlas overlay preview armed (no cache mutation)");
+			}
 			if ("1".equals(intent.getStringExtra("debug_force_update_dialog"))) {
 				String version = intent.getStringExtra("debug_force_update_version");
 				String body = intent.getStringExtra("debug_force_update_body");
@@ -879,8 +891,12 @@ public class GodotApp extends GodotActivity {
 		loadingOverlayTitle.setText(rebuildingCache
 				? nativeText(
 						"이미지 인덱스 캐시를 다시 만드는 중입니다",
-						"Rebuilding the image index cache")
-				: nativeText("게임 엔진을 시작하는 중입니다", "Starting the game engine"));
+						"Rebuilding the image index cache",
+						"正在重建图像索引缓存")
+				: nativeText(
+						"게임 엔진을 시작하는 중입니다",
+						"Starting the game engine",
+						"正在启动游戏引擎"));
 		loadingOverlayTitle.setTextColor(0xFFFFFFFF);
 		loadingOverlayTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
 		loadingOverlayTitle.setGravity(Gravity.CENTER);
@@ -908,12 +924,17 @@ public class GodotApp extends GodotActivity {
 						+ "세이브 / 진행도 / 로그인 정보는 보존됩니다.",
 						"A game update was detected, so the mobile texture cache is being rebuilt "
 						+ "for the new build.\nThe first launch takes about 30–60 seconds; later "
-						+ "launches return to normal speed.\n\nSaves, progress, and login data are preserved.")
+						+ "launches return to normal speed.\n\nSaves, progress, and login data are preserved.",
+						"检测到游戏更新，正在按新版本重建移动端纹理缓存。\n"
+						+ "首次启动约需 30–60 秒，之后将恢复正常速度。\n\n"
+						+ "存档、进度和登录信息都会保留。")
 				: nativeText(
 						"Godot과 관리형 게임 코드를 준비하고 있습니다.\n"
 						+ "런처 화면이 준비되면 자동으로 전환됩니다.",
 						"Preparing Godot and managed game code.\n"
-						+ "The launcher appears automatically when it is ready."));
+						+ "The launcher appears automatically when it is ready.",
+						"正在准备 Godot 和托管游戏代码。\n"
+						+ "启动器界面准备就绪后会自动显示。"));
 		loadingOverlayDescription.setTextColor(0xFFCCCCCC);
 		loadingOverlayDescription.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
 		loadingOverlayDescription.setGravity(Gravity.CENTER);
@@ -1848,18 +1869,22 @@ public class GodotApp extends GodotActivity {
 				nativeRendererPromptActive = false;
 				return;
 			}
-			String title = nativeText("그래픽 시작 복구", "Graphics startup recovery");
+			String title = nativeText(
+					"그래픽 시작 복구",
+					"Graphics startup recovery",
+					"图形启动恢复");
 			String message = nativeText(
 					"런처가 첫 사용 가능 화면 전에 두 번 종료되었습니다. 그래픽 드라이버가 원인일 수 있지만 확정된 것은 아닙니다. OpenGL 호환 렌더러로 한 번만 다시 시작할까요? 이후 실행의 기본값은 Vulkan으로 유지됩니다.",
-					"The launcher exited twice before its first usable frame. This can be caused by a graphics driver, but the cause is not confirmed. Restart once with the OpenGL compatibility renderer? Vulkan remains the default for later launches.");
+					"The launcher exited twice before its first usable frame. This can be caused by a graphics driver, but the cause is not confirmed. Restart once with the OpenGL compatibility renderer? Vulkan remains the default for later launches.",
+					"启动器在首个可用画面出现前连续退出了两次。图形驱动可能是原因，但尚未确认。是否仅本次使用 OpenGL 兼容渲染器重启？后续启动仍默认使用 Vulkan。");
 			new AlertDialog.Builder(this)
 					.setTitle(title)
 					.setMessage(message)
 					.setPositiveButton(
-							nativeText("호환 모드 시도", "Try compatibility mode"),
+							nativeText("호환 모드 시도", "Try compatibility mode", "尝试兼容模式"),
 							(dialog, which) -> requestCompatibilityRendererRestart())
 					.setNegativeButton(
-							nativeText("Vulkan 유지", "Keep Vulkan"),
+							nativeText("Vulkan 유지", "Keep Vulkan", "继续使用 Vulkan"),
 							(dialog, which) -> nativeRendererPromptActive = false)
 					.setCancelable(false)
 					.show();
@@ -1880,7 +1905,7 @@ public class GodotApp extends GodotActivity {
 		restartApp();
 	}
 
-	private boolean isEnglishLauncherLanguage() {
+	private String getLauncherLanguage() {
 		File preference = new File(getFilesDir(), "launcher_language.cfg");
 		if (preference.isFile() && preference.length() <= 4_096L) {
 			try (BufferedReader reader = new BufferedReader(
@@ -1889,18 +1914,27 @@ public class GodotApp extends GodotActivity {
 				String line;
 				while ((line = reader.readLine()) != null) {
 					String compact = line.replace(" ", "").trim();
-					if ("language=\"en\"".equalsIgnoreCase(compact)) return true;
-					if ("language=\"ko\"".equalsIgnoreCase(compact)) return false;
+					String prefix = "language=\"";
+					if (!compact.toLowerCase(Locale.ROOT).startsWith(prefix)
+							|| !compact.endsWith("\"")) continue;
+					String saved = compact.substring(prefix.length(), compact.length() - 1);
+					String normalized = LauncherLanguagePolicy.normalizePreference(saved);
+					if (!normalized.isEmpty()) return normalized;
 				}
 			} catch (IOException ex) {
 				Log.w(TAG, "[Renderer] launcher language preference unavailable", ex);
 			}
 		}
-		return !"ko".equalsIgnoreCase(Locale.getDefault().getLanguage());
+		return LauncherLanguagePolicy.fromLocale(Locale.getDefault().toLanguageTag());
 	}
 
-	private String nativeText(String korean, String english) {
-		return isEnglishLauncherLanguage() ? english : korean;
+	private String nativeText(String korean, String english, String simplifiedChinese) {
+		String language = getLauncherLanguage();
+		if (LauncherLanguagePolicy.KOREAN.equals(language)) return korean;
+		if (LauncherLanguagePolicy.SIMPLIFIED_CHINESE.equals(language)) {
+			return simplifiedChinese;
+		}
+		return english;
 	}
 
 	private static long startupNowUsec() {

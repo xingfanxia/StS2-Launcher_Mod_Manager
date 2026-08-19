@@ -104,6 +104,10 @@ internal sealed class StartupRecoveryDialog : ColorRect
             ? ""
             : $"\nLast mod whose load started: {request.ModCandidate}\n"
                 + "This is only a candidate, not a confirmed cause.\n";
+        var candidateZh = string.IsNullOrEmpty(request.ModCandidate)
+            ? ""
+            : $"\n最后开始加载的 mod：{request.ModCandidate}\n"
+                + "该 mod 仅为候选，并未确认是问题原因。\n";
         return Loc.Tr(
             $"같은 시작 단계에서 {request.FailureCount}회 연속 비정상 종료가 감지되었습니다.\n"
                 + $"단계: {request.Stage} · 종료 사유: {request.Reason}\n"
@@ -112,7 +116,11 @@ internal sealed class StartupRecoveryDialog : ColorRect
             $"The app exited abnormally {request.FailureCount} times at the same startup stage.\n"
                 + $"Stage: {request.Stage} · Exit reason: {request.Reason}\n"
                 + candidateEn
-                + "Safe Mode applies only to this run. It does not change mods, saves, login data, or settings."
+                + "Safe Mode applies only to this run. It does not change mods, saves, login data, or settings.",
+            $"应用在同一启动阶段连续异常退出 {request.FailureCount} 次。\n"
+                + $"阶段：{request.Stage} · 退出原因：{request.Reason}\n"
+                + candidateZh
+                + "安全模式仅对本次运行生效，不会修改 mod、存档、登录数据或设置。"
         );
     }
 

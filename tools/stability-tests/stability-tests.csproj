@@ -43,6 +43,10 @@
       Link="StartupPerformanceStage.cs"
     />
     <Compile
+      Include="../../src/STS2Mobile/Launcher/Components/LauncherLanguage.cs"
+      Link="LauncherLanguage.cs"
+    />
+    <Compile
       Include="../../src/STS2Mobile/Launcher/StartupPerformanceTimeline.cs"
       Link="StartupPerformanceTimeline.cs"
     />

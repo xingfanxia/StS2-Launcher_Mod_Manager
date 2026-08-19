@@ -140,12 +140,22 @@ public class LauncherView
         left.AddThemeConstantOverride("separation", (int)(10 * scale));
         leftCenter.AddChild(left);
 
+        var titleRow = new HBoxContainer();
+        titleRow.AddThemeConstantOverride("separation", Ui.S(scale, 10));
+        left.AddChild(titleRow);
+
         var title = new StyledLabel("StS2 Launcher", scale, fontSize: 26);
-        left.AddChild(title);
+        title.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        title.HorizontalAlignment = HorizontalAlignment.Left;
+        titleRow.AddChild(title);
+
+        // Language is a primary launch-page choice, so keep it visible beside
+        // the title instead of hiding a small EN toggle in the Console chrome.
+        titleRow.AddChild(new LanguageSelector(scale, SetStatus));
         left.AddChild(new HSeparator());
 
         _statusLabel = new StyledLabel(
-            "Initializing...",
+            Loc.Authored("Initializing..."),
             scale,
             provenance: TextProvenance.LauncherTemplateWithExternalContent
         );
@@ -208,8 +218,6 @@ public class LauncherView
         logTitle.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
         logHeader.AddChild(logTitle);
 
-        logHeader.AddChild(new LanguageToggle(scale, SetStatus));
-
         DebugButton = new StyledButton("Debug: OFF", scale, fontSize: 11, height: 28);
         DebugButton.CustomMinimumSize = new Vector2(
             (int)(110 * scale),
@@ -257,9 +265,17 @@ public class LauncherView
 
     public void SetStatus(string text) => _statusLabel.Text = Loc.Authored(text);
 
-    public void AppendLog(string msg) => Log.AppendLog(msg);
+    public void AppendLog(
+        string msg,
+        TextProvenance provenance = TextProvenance.LauncherAuthored
+    ) => Log.AppendLog(msg, provenance);
 
-    public void AppendColoredLog(string msg, Godot.Color color) => Log.AppendColoredLog(msg, color);
+    public void AppendColoredLog(
+        string msg,
+        Godot.Color color,
+        TextProvenance provenance = TextProvenance.LauncherAuthored
+    ) =>
+        Log.AppendColoredLog(msg, color, provenance);
 
     public void HideAllSections()
     {

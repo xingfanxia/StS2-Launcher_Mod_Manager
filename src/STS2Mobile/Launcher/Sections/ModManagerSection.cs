@@ -84,7 +84,7 @@ public class ModManagerSection : VBoxContainer
         AddChild(header);
 
         _backButton = new StyledButton(
-            "‹  BACK",
+            Loc.Tr("‹ 뒤로", "‹  BACK", "‹ 返回"),
             scale,
             fontSize: Ui.FontBody,
             height: Ui.TouchHeight,
@@ -130,7 +130,13 @@ public class ModManagerSection : VBoxContainer
         tabRow.AddThemeConstantOverride("separation", (int)(Ui.GapS * scale));
         AddChild(tabRow);
 
-        var tabNames = new[] { "WORKSHOP", "SUBSCRIBED", "LOCAL", "DOWNLOADS" };
+        var tabNames = new[]
+        {
+            Loc.Authored("WORKSHOP"),
+            Loc.Authored("SUBSCRIBED"),
+            Loc.Authored("LOCAL"),
+            Loc.Authored("DOWNLOADS"),
+        };
         _tabButtons = new StyledButton[tabNames.Length];
         for (int i = 0; i < tabNames.Length; i++)
         {
@@ -639,7 +645,7 @@ public class ModManagerSection : VBoxContainer
             " · ",
             new[]
             {
-                string.IsNullOrWhiteSpace(m.Author) ? null : "by " + m.Author,
+                string.IsNullOrWhiteSpace(m.Author) ? null : Loc.Authored("by ") + m.Author,
                 string.IsNullOrWhiteSpace(m.Version) ? null : LauncherModel.VersionLabel(m.Version),
             }.Where(s => s != null)
         );
@@ -650,8 +656,8 @@ public class ModManagerSection : VBoxContainer
 
         var facts = new List<(string, string)>
         {
-            ("Min game version", m.MinGameVersion),
-            ("Path", info.Path),
+            (Loc.Authored("Min game version"), m.MinGameVersion),
+            (Loc.Authored("Path"), info.Path),
         };
 
         var dialog = new ModDetailDialog(
@@ -661,10 +667,12 @@ public class ModManagerSection : VBoxContainer
             body,
             facts,
             _scale,
-            actionLabel: removable ? "Remove Mod" : null,
+            actionLabel: removable ? Loc.Authored("Remove Mod") : null,
             actionCallback: removable ? () => OnRowRemovePressed(info) : null,
             actionDanger: true,
-            action2Label: removable ? (info.Disabled ? "Enable" : "Disable") : null,
+            action2Label: removable
+                ? Loc.Authored(info.Disabled ? "Enable" : "Disable")
+                : null,
             action2Callback: removable ? () => OnLocalStashTogglePressed(info) : null,
             // Same semantic color as the SUBSCRIBED rows: Enable=Accent,
             // Disable=Secondary (was hardcoded Accent → 색이 화면마다 달랐음).
@@ -980,7 +988,7 @@ public class ModManagerSection : VBoxContainer
         Callable
             .From(() =>
             {
-                _statusLabel.Text = text;
+                _statusLabel.Text = Loc.Authored(text);
                 _statusLabel.AddThemeColorOverride("font_color", color);
             })
             .CallDeferred();

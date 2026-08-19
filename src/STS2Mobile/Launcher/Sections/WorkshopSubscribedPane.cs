@@ -869,7 +869,7 @@ public class WorkshopSubscribedPane : VBoxContainer
     // Must run on the main thread.
     private void SetStatus(string text, Color color)
     {
-        _statusLabel.Text = text;
+        _statusLabel.Text = Loc.Authored(text);
         _statusLabel.AddThemeColorOverride("font_color", color);
     }
 

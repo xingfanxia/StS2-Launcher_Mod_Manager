@@ -3,29 +3,62 @@ using Godot;
 namespace STS2Mobile.Launcher.Components;
 
 // Locale-aware string picker. The first launch follows the device language; a
-// manual KR/EN choice from the launch screen is persisted in user:// and wins on
-// subsequent launches. Button labels and proper nouns (SUBSCRIBE, WORKSHOP, mod
-// ids…) stay English by design — sentences and notifications are localized.
+// manual KR/EN/zh-Hans choice from the launch screen is persisted in user://
+// and wins on subsequent launches. Product/technical names and external mod or
+// Workshop content are preserved while launcher-owned actions and sentences
+// are localized.
 public static class Loc
 {
-    public static bool IsKo => LauncherLanguagePreference.IsKorean;
+    internal static LauncherLanguage CurrentLanguage => LauncherLanguagePreference.Current;
 
-    public static bool IsEnglish => !IsKo;
+    public static bool IsKo => CurrentLanguage == LauncherLanguage.Korean;
+
+    public static bool IsEnglish => CurrentLanguage == LauncherLanguage.English;
+
+    public static bool IsSimplifiedChinese =>
+        CurrentLanguage == LauncherLanguage.SimplifiedChinese;
 
     public static string Tr(string ko, string en)
     {
+        var zh = SimplifiedChineseLocalization.Translate(ko, en);
+        return Select(ko, en, zh);
+    }
+
+    public static string Tr(string ko, string en, string zh) => Select(ko, en, zh);
+
+    public static string Select(string ko, string en, string zh)
+    {
+        zh = SimplifiedChineseLocalization.ForDisplay(zh);
         EnglishLocalization.Register(ko, en);
-        return IsKo ? ko : en;
+        SimplifiedChineseLocalization.Register(ko, en, zh);
+        return CurrentLanguage switch
+        {
+            LauncherLanguage.Korean => ko,
+            LauncherLanguage.SimplifiedChinese => zh,
+            _ => en,
+        };
     }
 
     public static string Authored(string text)
     {
-        var korean = EnglishLocalization.RestoreKorean(text);
+        var korean = SimplifiedChineseLocalization.RestoreCanonical(text);
+        korean = EnglishLocalization.RestoreKorean(korean);
         var english = EnglishLocalization.Translate(korean);
+        var chinese = SimplifiedChineseLocalization.Translate(korean, english);
         if (english != korean)
             EnglishLocalization.Register(korean, english);
-        return IsEnglish ? english : korean;
+        if (chinese != korean)
+            SimplifiedChineseLocalization.Register(korean, english, chinese);
+        return CurrentLanguage switch
+        {
+            LauncherLanguage.Korean => korean,
+            LauncherLanguage.SimplifiedChinese => chinese,
+            _ => english,
+        };
     }
+
+    internal static string Render(string text, TextProvenance provenance) =>
+        LocalizedTextPolicy.Render(text, CurrentLanguage, provenance);
 
     public static void Watch(
         Label label,
@@ -42,14 +75,20 @@ public static class Loc
         TextProvenance provenance = TextProvenance.LauncherAuthored
     ) => LocalizedTextRegistry.Watch(lineEdit, provenance);
 
-    // Called four times per second by LanguageToggle. This keeps text assigned by
+    public static void Watch(
+        OptionButton optionButton,
+        int itemIndex,
+        TextProvenance provenance = TextProvenance.LauncherAuthored
+    ) => LocalizedTextRegistry.Watch(optionButton, itemIndex, provenance);
+
+    // Called four times per second by LanguageSelector. This keeps text assigned by
     // upstream flows localized too, without editing every controller/dialog.
     public static LocalizationAuditSnapshot RefreshWatched() =>
-        LocalizedTextRegistry.Refresh(IsEnglish);
+        LocalizedTextRegistry.Refresh(CurrentLanguage);
 
-    public static void SetEnglish(bool enabled)
+    internal static void SetLanguage(LauncherLanguage language)
     {
-        if (LauncherLanguagePreference.SetEnglish(enabled))
+        if (LauncherLanguagePreference.Set(language))
             RefreshWatched();
     }
 }

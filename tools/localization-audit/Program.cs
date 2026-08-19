@@ -71,13 +71,15 @@ foreach (
 }
 
 Console.WriteLine(
-    $"Audited {entries.Count} Hangul-bearing source entries across "
+    $"Audited {entries.Count} localization source entries across "
         + $"{entries.Select(entry => entry.Path).Distinct(StringComparer.Ordinal).Count()} files."
 );
 
 if (failures.Count == 0)
 {
-    Console.WriteLine("PASS: every launcher-authored visible Hangul literal has an English path.");
+    Console.WriteLine(
+        "PASS: every launcher-authored visible Hangul literal has English and Simplified Chinese paths."
+    );
     return 0;
 }
 
@@ -93,12 +95,14 @@ void AuditPolicyFixtures()
     const string externalKorean = "외부 한글 모드 이름";
     var mixedKorean = $"'{externalKorean}' 모드에서 오류가 발생했습니다.";
     var mixedEnglish = $"The '{externalKorean}' mod encountered an error.";
+    var mixedChinese = $"mod\"{externalKorean}\"发生错误.";
     EnglishLocalization.Register(mixedKorean, mixedEnglish);
+    SimplifiedChineseLocalization.Register(mixedKorean, mixedEnglish, mixedChinese);
 
     Check(
         LocalizedTextPolicy.Render(
             launcherKorean,
-            useEnglish: true,
+            LauncherLanguage.English,
             TextProvenance.LauncherAuthored
         ) == launcherEnglish,
         "launcher-authored policy fixture did not translate"
@@ -106,7 +110,7 @@ void AuditPolicyFixtures()
     Check(
         LocalizedTextPolicy.Render(
             "클라우드 받는 중... 7/225",
-            useEnglish: true,
+            LauncherLanguage.English,
             TextProvenance.LauncherAuthored
         ) == "Downloading cloud saves... 7/225",
         "dynamic cloud-pull progress did not translate"
@@ -114,20 +118,24 @@ void AuditPolicyFixtures()
     Check(
         LocalizedTextPolicy.Render(
             "클라우드 정리 중... 3/20",
-            useEnglish: true,
+            LauncherLanguage.English,
             TextProvenance.LauncherAuthored
         ) == "Cleaning up cloud saves... 3/20",
         "dynamic cloud-cleanup progress did not translate"
     );
     Check(
-        LocalizedTextPolicy.Render(launcherKorean, useEnglish: true, TextProvenance.ExternalContent)
+        LocalizedTextPolicy.Render(
+            launcherKorean,
+            LauncherLanguage.English,
+            TextProvenance.ExternalContent
+        )
             == launcherKorean,
         "external text was rewritten even though it matched launcher copy"
     );
     Check(
         LocalizedTextPolicy.Render(
             mixedKorean,
-            useEnglish: true,
+            LauncherLanguage.English,
             TextProvenance.LauncherTemplateWithExternalContent
         ) == mixedEnglish,
         "mixed launcher/external pair did not translate"
@@ -135,14 +143,110 @@ void AuditPolicyFixtures()
     Check(
         LocalizedTextPolicy.Render(
             mixedEnglish,
-            useEnglish: false,
+            LauncherLanguage.Korean,
             TextProvenance.LauncherTemplateWithExternalContent
         ) == mixedKorean,
         "mixed launcher/external pair did not round-trip"
     );
     Check(
+        LocalizedTextPolicy.Render(
+            mixedKorean,
+            LauncherLanguage.SimplifiedChinese,
+            TextProvenance.LauncherTemplateWithExternalContent
+        ) == mixedChinese,
+        "mixed launcher/external pair did not translate to Simplified Chinese"
+    );
+    Check(
+        LocalizedTextPolicy.Render(
+            mixedChinese,
+            LauncherLanguage.Korean,
+            TextProvenance.LauncherTemplateWithExternalContent
+        ) == mixedKorean,
+        "mixed Simplified Chinese launcher/external pair did not round-trip"
+    );
+    Check(
+        LocalizedTextPolicy.Render(
+            "Steam Username",
+            LauncherLanguage.SimplifiedChinese,
+            TextProvenance.LauncherAuthored
+        ) == "Steam 用户名",
+        "English-only launcher copy did not translate to Simplified Chinese"
+    );
+    Check(
+        LocalizedTextPolicy.Render(
+            "Welcome back, ExampleAccount",
+            LauncherLanguage.SimplifiedChinese,
+            TextProvenance.LauncherAuthored
+        ) == "欢迎回来, ExampleAccount",
+        "dynamic English template did not preserve its external account value"
+    );
+    Check(
+        LocalizedTextPolicy.Render(
+            "PLAY",
+            LauncherLanguage.SimplifiedChinese,
+            TextProvenance.LauncherAuthored
+        ) == "开始游戏",
+        "PLAY action was not translated"
+    );
+    Check(
+        LocalizedTextPolicy.Render(
+            "226686 subscriber(s) · 58.1 MB · 97% rated",
+            LauncherLanguage.SimplifiedChinese,
+            TextProvenance.LauncherAuthored
+        ) == "226686 位订阅者 · 58.1 MB · 97% 好评",
+        "Workshop dynamic statistics were not translated"
+    );
+    Check(
+        LocalizedTextPolicy.Render(
+            "131h 11m",
+            LauncherLanguage.SimplifiedChinese,
+            TextProvenance.LauncherAuthored
+        ) == "131 小时 11 分钟",
+        "dynamic playtime was not translated"
+    );
+    Check(
+        LocalizedTextPolicy.Render(
+            "198.0 KB · 131h 11m · 2막 6층",
+            LauncherLanguage.SimplifiedChinese,
+            TextProvenance.LauncherAuthored
+        ) == "198.0 KB · 131 小时 11 分钟 · 第 2 幕, 第 6 层",
+        "combined profile size/playtime/current-run template was not translated"
+    );
+    Check(
+        LocalizedTextPolicy.Render(
+            "[Cloud] SavePathCompat: GetRunSavePath → ≤v0.107 overload",
+            LauncherLanguage.SimplifiedChinese,
+            TextProvenance.LauncherDiagnosticWithExternalContent
+        ) == "[云存档] 存档路径兼容性检查完成.",
+        "visible Cloud diagnostic was not summarized in Simplified Chinese"
+    );
+    var punctuationSafe = SimplifiedChineseLocalization.ForDisplay(
+        "点击“导入 mod（.zip）”，继续。"
+    );
+    Check(
+        punctuationSafe.Contains("导入 mod(.zip)", StringComparison.Ordinal)
+            && !punctuationSafe.Any(ch => "（）“”，。".Contains(ch)),
+        "unsupported CJK punctuation was not normalized for the Android font"
+    );
+    Check(
+        LocalizedTextPolicy.Render(
+            "External English Workshop Title",
+            LauncherLanguage.SimplifiedChinese,
+            TextProvenance.ExternalContent
+        ) == "External English Workshop Title",
+        "external English content was rewritten in Simplified Chinese mode"
+    );
+    Check(
+        SimplifiedChineseLocalization.LooksUntranslated("Untranslated launcher sentence")
+            && !SimplifiedChineseLocalization.LooksUntranslated("启动器已就绪")
+            && !SimplifiedChineseLocalization.LooksUntranslated("1.1 KB · —")
+            && SimplifiedChineseLocalization.LooksUntranslated("1.1 KB download failed"),
+        "runtime Simplified Chinese residue detector is not discriminating"
+    );
+    Check(
         LocalizedTextPolicy.IsUntranslatedLauncherText(
             "번역되지 않은 런처 문장",
+            LauncherLanguage.English,
             TextProvenance.LauncherAuthored
         ),
         "unknown launcher-authored Hangul was silently accepted"
@@ -150,6 +254,7 @@ void AuditPolicyFixtures()
     Check(
         !LocalizedTextPolicy.IsUntranslatedLauncherText(
             externalKorean,
+            LauncherLanguage.English,
             TextProvenance.ExternalContent
         ),
         "external Hangul was classified as a launcher localization failure"
@@ -175,8 +280,28 @@ void AuditProvenanceContracts()
         "TextProvenance.LauncherTemplateWithExternalContent"
     );
     RequireSource(
+        "src/STS2Mobile/Launcher/LauncherController.cs",
+        "TextProvenance.LauncherDiagnosticWithExternalContent"
+    );
+    RequireSource(
+        "src/STS2Mobile/Launcher/Components/LogView.cs",
+        "RefreshLanguage"
+    );
+    RequireSource(
         "src/STS2Mobile/Launcher/Components/LanguageToggle.cs",
-        "authored_hangul={audit.UntranslatedLauncherText}"
+        "untranslated={audit.UntranslatedLauncherText}"
+    );
+    RequireSource(
+        "src/STS2Mobile/Launcher/LauncherController.cs",
+        "_view.AppendLog(msg, TextProvenance.ExternalContent)"
+    );
+    RequireSource(
+        "src/STS2Mobile/Launcher/LauncherController.cs",
+        "_view.AppendLog(p.CurrentFile, TextProvenance.ExternalContent)"
+    );
+    RequireSource(
+        "src/STS2Mobile/Launcher/Sections/ModManagerSection.cs",
+        "Loc.Authored(\"WORKSHOP\")"
     );
 }
 
@@ -222,24 +347,35 @@ void AuditCSharp(string path)
         if (
             relative.EndsWith("/StartupPerformanceStage.cs", StringComparison.Ordinal)
             && invocation.Expression.ToString() == "Stage"
-            && invocation.ArgumentList.Arguments.Count >= 11
+            && invocation.ArgumentList.Arguments.Count >= 13
         )
         {
             var stageArguments = invocation.ArgumentList.Arguments;
-            foreach (var (koreanIndex, englishIndex) in new[] { (2, 3), (4, 5) })
+            foreach (
+                var (koreanIndex, englishIndex, chineseIndex) in new[]
+                {
+                    (2, 3, 4),
+                    (5, 6, 7),
+                }
+            )
             {
                 var koreanArgument = stageArguments[koreanIndex];
                 var englishArgument = stageArguments[englishIndex];
+                var chineseArgument = stageArguments[chineseIndex];
                 var stageKorean = SampleExpression(koreanArgument.Expression);
                 var stageEnglish = SampleExpression(englishArgument.Expression);
+                var stageChinese = SampleExpression(chineseArgument.Expression);
                 if (
                     !ContainsHangul(stageKorean)
                     || ContainsHangul(stageEnglish)
                     || string.IsNullOrWhiteSpace(stageEnglish)
+                    || ContainsHangul(stageChinese)
+                    || !ContainsCjk(stageChinese)
+                    || ContainsTraditionalOnly(stageChinese)
                 )
                 {
                     failures.Add(
-                        $"{relative}:{Line(tree, invocation.SpanStart)} invalid startup-stage Korean/English pair"
+                        $"{relative}:{Line(tree, invocation.SpanStart)} invalid startup-stage Korean/English/zh-Hans trio"
                     );
                 }
                 else
@@ -254,6 +390,7 @@ void AuditCSharp(string path)
                 }
                 handledSpans.Add(koreanArgument.Span);
                 handledSpans.Add(englishArgument.Span);
+                handledSpans.Add(chineseArgument.Span);
             }
             continue;
         }
@@ -261,24 +398,38 @@ void AuditCSharp(string path)
         if (!IsLocTr(invocation))
             continue;
         var arguments = invocation.ArgumentList.Arguments;
-        if (arguments.Count != 2)
+        if (
+            IsLocSelect(invocation)
+            && arguments.Count > 0
+            && !ContainsHangul(SampleExpression(arguments[0].Expression))
+        )
+            continue;
+        if (arguments.Count is < 2 or > 3)
         {
             failures.Add(
-                $"{relative}:{Line(tree, invocation.SpanStart)} Loc.Tr must have two arguments"
+                $"{relative}:{Line(tree, invocation.SpanStart)} Loc.Tr must have two or three arguments"
             );
             continue;
         }
 
         var korean = SampleExpression(arguments[0].Expression);
         var english = SampleExpression(arguments[1].Expression);
+        var chinese =
+            arguments.Count == 3
+                ? SampleExpression(arguments[2].Expression)
+                : SimplifiedChineseLocalization.Translate(korean, english);
         if (
             !ContainsHangul(korean)
             || ContainsHangul(english)
             || string.IsNullOrWhiteSpace(english)
+            || ContainsHangul(chinese)
+            || !ContainsCjk(chinese)
+            || ContainsTraditionalOnly(chinese)
         )
         {
             failures.Add(
-                $"{relative}:{Line(tree, invocation.SpanStart)} invalid Loc.Tr Korean/English pair"
+                $"{relative}:{Line(tree, invocation.SpanStart)} invalid Loc.Tr Korean/English/zh-Hans path: "
+                    + Display(korean)
             );
         }
         else
@@ -287,6 +438,8 @@ void AuditCSharp(string path)
         }
         handledSpans.Add(arguments[0].Span);
         handledSpans.Add(arguments[1].Span);
+        if (arguments.Count == 3)
+            handledSpans.Add(arguments[2].Span);
     }
 
     var candidates = root.DescendantNodes()
@@ -310,7 +463,13 @@ void AuditCSharp(string path)
         if (!ContainsHangul(sample))
             continue;
 
-        if (relative.EndsWith("/EnglishLocalization.cs", StringComparison.Ordinal))
+        if (
+            relative.EndsWith("/EnglishLocalization.cs", StringComparison.Ordinal)
+            || relative.EndsWith(
+                "/SimplifiedChineseLocalization.cs",
+                StringComparison.Ordinal
+            )
+        )
         {
             AuditCatalogEntry(relative, tree, candidate, sample);
             continue;
@@ -323,10 +482,18 @@ void AuditCSharp(string path)
         if (HasAdjacentEnglishPair(candidate))
         {
             Add(relative, tree, candidate.SpanStart, "ui-adjacent-pair", sample);
+            if (!HasAdjacentChinesePair(candidate))
+            {
+                failures.Add(
+                    $"{relative}:{Line(tree, candidate.SpanStart)} adjacent Korean/English text lacks zh-Hans sibling: "
+                        + Display(sample)
+                );
+            }
             continue;
         }
 
         var translated = EnglishLocalization.Translate(sample);
+        var translatedChinese = SimplifiedChineseLocalization.Translate(sample, translated);
         Add(relative, tree, owner.SpanStart, "ui-central-overlay", sample);
         if (ContainsHangul(translated))
         {
@@ -335,7 +502,187 @@ void AuditCSharp(string path)
                     + Display(sample)
             );
         }
+        if (
+            ContainsHangul(translatedChinese)
+            || !ContainsCjk(translatedChinese)
+            || ContainsTraditionalOnly(translatedChinese)
+        )
+        {
+            failures.Add(
+                $"{relative}:{Line(tree, owner.SpanStart)} missing Simplified Chinese launcher text: "
+                    + Display(sample)
+            );
+        }
     }
+
+    AuditEnglishLauncherText(relative, tree, root, handledSpans);
+}
+
+void AuditEnglishLauncherText(
+    string relative,
+    SyntaxTree tree,
+    SyntaxNode root,
+    List<TextSpan> handledSpans
+)
+{
+    if (
+        relative.EndsWith("/EnglishLocalization.cs", StringComparison.Ordinal)
+        || relative.EndsWith("/SimplifiedChineseLocalization.cs", StringComparison.Ordinal)
+        || relative.EndsWith("/LocalizedTextPolicy.cs", StringComparison.Ordinal)
+        || relative.EndsWith("/LocalizedTextRegistry.cs", StringComparison.Ordinal)
+    )
+        return;
+
+    var seen = new HashSet<TextSpan>();
+    foreach (
+        var candidate in root.DescendantNodes()
+            .Where(node =>
+                node is LiteralExpressionSyntax literal
+                    && literal.IsKind(SyntaxKind.StringLiteralExpression)
+                    && ContainsLatin(literal.Token.ValueText)
+                || node is InterpolatedStringExpressionSyntax interpolated
+                    && ContainsLatin(interpolated.ToString())
+            )
+    )
+    {
+        if (handledSpans.Any(span => span.Contains(candidate.Span)))
+            continue;
+        var owner = ExpandStringExpression(candidate);
+        if (!seen.Add(owner.Span) || !IsLauncherUiText(owner))
+            continue;
+        var sample = SampleExpression(owner);
+        if (
+            string.IsNullOrWhiteSpace(sample)
+            || ContainsHangul(sample)
+            || !ContainsLatin(sample)
+            || IsPlaceholderOnly(sample)
+        )
+            continue;
+        if (IsApprovedUntranslatedToken(sample))
+        {
+            Add(relative, tree, owner.SpanStart, "ui-approved-token", sample);
+            continue;
+        }
+
+        Add(relative, tree, owner.SpanStart, "ui-english-source", sample);
+        var translated = SimplifiedChineseLocalization.Translate(sample, sample);
+        if (
+            translated == sample
+            || !ContainsCjk(translated)
+            || ContainsHangul(translated)
+            || ContainsTraditionalOnly(translated)
+        )
+        {
+            failures.Add(
+                $"{relative}:{Line(tree, owner.SpanStart)} English launcher text lacks Simplified Chinese: "
+                    + Display(sample)
+            );
+        }
+    }
+}
+
+static bool IsLauncherUiText(SyntaxNode node)
+{
+    foreach (var ancestor in node.AncestorsAndSelf())
+    {
+        if (ancestor is ObjectCreationExpressionSyntax creation)
+        {
+            var type = creation.Type.ToString();
+            if (type is "StyledLabel" or "StyledButton" or "StyledLineEdit")
+            {
+                if (
+                    creation.ArgumentList?.Arguments.FirstOrDefault()?.Span.Contains(node.Span)
+                    != true
+                )
+                    continue;
+                if (
+                    creation
+                        .ToString()
+                        .Contains("TextProvenance.ExternalContent", StringComparison.Ordinal)
+                    || creation
+                        .ToString()
+                        .Contains(
+                            "TextProvenance.LauncherTemplateWithExternalContent",
+                            StringComparison.Ordinal
+                        )
+                )
+                    return false;
+                return true;
+            }
+        }
+
+        if (ancestor is InvocationExpressionSyntax invocation)
+        {
+            var name = invocation.Expression.ToString();
+            var arguments = invocation.ArgumentList.Arguments;
+            var index = arguments.IndexOf(arguments.FirstOrDefault(argument =>
+                argument.Span.Contains(node.Span)
+            ));
+            if (index < 0)
+                continue;
+            if (
+                name.EndsWith(".AddItem", StringComparison.Ordinal)
+                || name is "Ui.MakePill" or "Ui.MakeSectionHeader"
+            )
+                return index == 0;
+            if (name == "Ui.MakeEmptyState")
+                return index is 1 or 2;
+            if (
+                name
+                    is "Loc.Authored"
+                        or "SetStatus"
+                        or "SetButtonText"
+                        or "SetLaunchButtonText"
+                        or "SetGameUpdateButtonText"
+                        or "SetLauncherUpdateButtonText"
+                        or "SetMessage"
+                        or "ShowConfirmation"
+                        or "AppendLog"
+                        or "AppendColoredLog"
+                || name.EndsWith(".SetStatus", StringComparison.Ordinal)
+                || name.EndsWith(".SetButtonText", StringComparison.Ordinal)
+                || name.EndsWith(".SetLaunchButtonText", StringComparison.Ordinal)
+                || name.EndsWith(".SetGameUpdateButtonText", StringComparison.Ordinal)
+                || name.EndsWith(".SetLauncherUpdateButtonText", StringComparison.Ordinal)
+                || name.EndsWith(".ShowConfirmation", StringComparison.Ordinal)
+                || name.EndsWith(".AppendLog", StringComparison.Ordinal)
+                || name.EndsWith(".AppendColoredLog", StringComparison.Ordinal)
+            )
+                return index == 0;
+        }
+
+        if (
+            ancestor is AssignmentExpressionSyntax assignment
+            && assignment.Right.Span.Contains(node.Span)
+        )
+        {
+            var target = assignment.Left.ToString();
+            if (
+                target.EndsWith(".Text", StringComparison.Ordinal)
+                || target is "Text" or "PlaceholderText" or "TooltipText"
+                || target.EndsWith(".PlaceholderText", StringComparison.Ordinal)
+                || target.EndsWith(".TooltipText", StringComparison.Ordinal)
+            )
+                return true;
+        }
+    }
+    return false;
+}
+
+static bool IsApprovedUntranslatedToken(string value) =>
+    value
+        is "StS2 Launcher"
+            or "LANG"
+            or "한국어"
+            or "English"
+            or "简体中文"
+            or "public"
+            or "Made using FMOD Studio by Firelight Technologies Pty Ltd.";
+
+static bool IsPlaceholderOnly(string value)
+{
+    var stripped = Regex.Replace(value ?? "", "Sample|[0-9]|[\\s.·:/()%…-]", "");
+    return stripped.Length == 0;
 }
 
 void AuditCatalogEntry(string relative, SyntaxTree tree, SyntaxNode candidate, string sample)
@@ -369,10 +716,27 @@ void AuditCatalogEntry(string relative, SyntaxTree tree, SyntaxNode candidate, s
         english = SampleExpression(tuple.Arguments[1].Expression);
 
     Add(relative, tree, candidate.SpanStart, "translation-catalog", sample);
-    if (string.IsNullOrWhiteSpace(english) || ContainsHangul(english))
+    if (
+        string.IsNullOrWhiteSpace(english)
+        || ContainsHangul(english)
+        || relative.EndsWith("/SimplifiedChineseLocalization.cs", StringComparison.Ordinal)
+            && ContainsTraditionalOnly(english)
+    )
     {
         failures.Add(
             $"{relative}:{Line(tree, candidate.SpanStart)} catalog entry lacks an English pair: "
+                + Display(sample)
+        );
+    }
+        if (
+            relative.EndsWith("/EnglishLocalization.cs", StringComparison.Ordinal)
+            && (ContainsHangul(SimplifiedChineseLocalization.Translate(sample, english))
+                || !ContainsCjk(SimplifiedChineseLocalization.Translate(sample, english)))
+            && !ChineseCatalogContains(sample)
+        )
+    {
+        failures.Add(
+            $"{relative}:{Line(tree, candidate.SpanStart)} catalog entry lacks Simplified Chinese: "
                 + Display(sample)
         );
     }
@@ -403,18 +767,33 @@ void AuditJava(string path)
 
         var paired = ScanQuotedLanguage(invocation).Strings;
         var koreanIndex = paired.FindIndex(item => ContainsHangul(item.Value));
-        var hasEnglishAfter =
+        var languageValues =
             koreanIndex >= 0
-            && paired
+                ? paired
                 .Skip(koreanIndex + 1)
-                .Any(item => !ContainsHangul(item.Value) && !string.IsNullOrWhiteSpace(item.Value));
+                .Where(item => !string.IsNullOrWhiteSpace(item.Value))
+                .Select(item => item.Value)
+                .ToArray()
+                : Array.Empty<string>();
+        var hasEnglishAfter = languageValues.Any(value =>
+            !ContainsHangul(value) && !ContainsCjk(value)
+        );
+        var hasChineseAfter =
+            languageValues.Any(value => !ContainsHangul(value) && ContainsCjk(value));
+        hasChineseAfter =
+            hasChineseAfter
+            && languageValues.Any(value =>
+                !ContainsHangul(value)
+                && ContainsCjk(value)
+                && !ContainsTraditionalOnly(value)
+            );
         entries.Add(
             new InventoryEntry(relative, literal.Line, "android-native-pair", literal.Value)
         );
-        if (!hasEnglishAfter)
+        if (!hasEnglishAfter || !hasChineseAfter)
         {
             failures.Add(
-                $"{relative}:{literal.Line} nativeText Korean argument lacks an English pair"
+                $"{relative}:{literal.Line} nativeText Korean argument lacks English/zh-Hans paths"
             );
         }
     }
@@ -525,7 +904,15 @@ static string Placeholder(string expression)
 }
 
 static bool IsLocTr(InvocationExpressionSyntax invocation) =>
-    invocation.Expression.ToString() is "Loc.Tr" or "STS2Mobile.Launcher.Components.Loc.Tr";
+    invocation.Expression.ToString()
+        is "Loc.Tr"
+            or "Loc.Select"
+            or "STS2Mobile.Launcher.Components.Loc.Tr"
+            or "STS2Mobile.Launcher.Components.Loc.Select";
+
+static bool IsLocSelect(InvocationExpressionSyntax invocation) =>
+    invocation.Expression.ToString()
+        is "Loc.Select" or "STS2Mobile.Launcher.Components.Loc.Select";
 
 static bool IsLogOnly(SyntaxNode node)
 {
@@ -568,6 +955,27 @@ static bool HasAdjacentEnglishPair(SyntaxNode node)
         return false;
     var source = english.Initializer.Value.ToString();
     return !ContainsHangul(source) && source.Contains('"');
+}
+
+static bool HasAdjacentChinesePair(SyntaxNode node)
+{
+    var korean = node.AncestorsAndSelf().OfType<VariableDeclaratorSyntax>().FirstOrDefault();
+    if (korean == null || !korean.Identifier.ValueText.EndsWith("Ko", StringComparison.Ordinal))
+        return false;
+    var chineseName = korean.Identifier.ValueText[..^2] + "Zh";
+    var scope = korean
+        .Ancestors()
+        .FirstOrDefault(ancestor => ancestor is BlockSyntax or ArrowExpressionClauseSyntax);
+    if (scope == null)
+        return false;
+    var chinese = scope
+        .DescendantNodes()
+        .OfType<VariableDeclaratorSyntax>()
+        .FirstOrDefault(variable => variable.Identifier.ValueText == chineseName);
+    if (chinese?.Initializer == null)
+        return false;
+    var source = chinese.Initializer.Value.ToString();
+    return ContainsCjk(source) && !ContainsHangul(source);
 }
 
 static string FindContainingInvocation(string source, int offset, string method)
@@ -712,10 +1120,35 @@ static int SourceLine(string source, int offset) =>
 static bool ContainsHangul(string value) =>
     !string.IsNullOrEmpty(value) && value.Any(ch => ch is >= '\uAC00' and <= '\uD7A3');
 
+static bool ContainsCjk(string value) =>
+    !string.IsNullOrEmpty(value) && value.Any(ch => ch is >= '\u3400' and <= '\u9FFF');
+
+static bool ContainsTraditionalOnly(string value)
+{
+    const string traditionalOnly = "檔雲設啟體顯載錄錯誤開關網頁選擇進態碼號這個從將與為後裡過還請時區據級擊戶權現";
+    return !string.IsNullOrEmpty(value) && value.Any(traditionalOnly.Contains);
+}
+
+static bool ContainsLatin(string value) =>
+    !string.IsNullOrEmpty(value) && value.Any(ch => ch is >= 'A' and <= 'Z' or >= 'a' and <= 'z');
+
 static string Display(string value)
 {
     var compact = Regex.Replace(value ?? "", "\\s+", " ").Trim();
     return compact.Length <= 140 ? compact : compact[..137] + "...";
+}
+
+bool ChineseCatalogContains(string sample)
+{
+    var path = Path.Combine(
+        repository,
+        "src",
+        "STS2Mobile",
+        "Launcher",
+        "Components",
+        "SimplifiedChineseLocalization.cs"
+    );
+    return File.ReadAllText(path).Contains(sample, StringComparison.Ordinal);
 }
 
 static string FindRepositoryRoot()

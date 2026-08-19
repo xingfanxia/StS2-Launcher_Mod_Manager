@@ -530,6 +530,109 @@ try
     );
 
     Run(
+        "launcher language codes preserve upgrades and classify Chinese scripts",
+        () =>
+        {
+            Assert(
+                LauncherLanguageCodes.TryParsePreference("ko", out var korean)
+                    && korean == LauncherLanguage.Korean,
+                "legacy ko preference must remain readable"
+            );
+            Assert(
+                LauncherLanguageCodes.TryParsePreference("en", out var english)
+                    && english == LauncherLanguage.English,
+                "legacy en preference must remain readable"
+            );
+            foreach (var value in new[] { "zh", "zh-Hans", "zh_CN", "zh-SG" })
+                Assert(
+                    LauncherLanguageCodes.TryParsePreference(value, out var chinese)
+                        && chinese == LauncherLanguage.SimplifiedChinese,
+                    $"simplified Chinese preference not recognized: {value}"
+                );
+            Assert(
+                !LauncherLanguageCodes.TryParsePreference("broken", out _),
+                "unknown persisted language must be rejected"
+            );
+            Assert(
+                LauncherLanguageCodes.ToPreferenceValue(LauncherLanguage.SimplifiedChinese)
+                    == "zh-Hans",
+                "simplified Chinese must use the canonical persisted code"
+            );
+
+            foreach (var locale in new[] { "zh-Hans", "zh_CN", "zh-SG", "zh" })
+                Assert(
+                    LauncherLanguageCodes.FromSystemLocale(locale)
+                        == LauncherLanguage.SimplifiedChinese,
+                    $"simplified Chinese locale not selected: {locale}"
+                );
+            foreach (var locale in new[] { "zh-Hant", "zh_TW", "zh-HK", "zh_MO" })
+                Assert(
+                    LauncherLanguageCodes.FromSystemLocale(locale) == LauncherLanguage.English,
+                    $"traditional Chinese locale must not silently select Simplified: {locale}"
+                );
+            Assert(
+                LauncherLanguageCodes.FromSystemLocale("ko-KR") == LauncherLanguage.Korean,
+                "Korean system locale must select Korean"
+            );
+            Assert(
+                LauncherLanguageCodes.FromSystemLocale("fr-FR") == LauncherLanguage.English,
+                "other locales must retain the existing English default"
+            );
+        }
+    );
+
+    Run(
+        "language selector is prominent, three-valued, and touch-sized",
+        () =>
+        {
+            var repository = FindRepositoryRoot();
+            var components = Path.Combine(
+                repository,
+                "src",
+                "STS2Mobile",
+                "Launcher",
+                "Components"
+            );
+            var selector = File.ReadAllText(Path.Combine(components, "LanguageToggle.cs"));
+            var view = File.ReadAllText(
+                Path.Combine(repository, "src", "STS2Mobile", "Launcher", "LauncherView.cs")
+            );
+            var registry = File.ReadAllText(
+                Path.Combine(components, "LocalizedTextRegistry.cs")
+            );
+
+            Assert(
+                selector.Contains("class LanguageSelector", StringComparison.Ordinal)
+                    && selector.Contains("new OptionButton()", StringComparison.Ordinal)
+                    && selector.Contains("\"한국어\"", StringComparison.Ordinal)
+                    && selector.Contains("\"English\"", StringComparison.Ordinal)
+                    && selector.Contains("\"简体中文\"", StringComparison.Ordinal)
+                    && selector.Contains("\"LANG\"", StringComparison.Ordinal)
+                    && selector.Contains("Ui.TouchHeight", StringComparison.Ordinal)
+                    && selector.Contains("_lastReportedAudit = null", StringComparison.Ordinal)
+                    && !selector.Contains("EN · ON", StringComparison.Ordinal)
+                    && !selector.Contains("EN · OFF", StringComparison.Ordinal),
+                "legacy binary toggle or undersized selector remains"
+            );
+            int selectorMount = view.IndexOf("new LanguageSelector", StringComparison.Ordinal);
+            int loginMount = view.IndexOf("Login = new LoginSection", StringComparison.Ordinal);
+            int consoleMount = view.IndexOf("var logHeader", StringComparison.Ordinal);
+            Assert(
+                selectorMount >= 0
+                    && selectorMount < loginMount
+                    && selectorMount < consoleMount
+                    && view.Split("new LanguageSelector", StringSplitOptions.None).Length == 2,
+                "language selector must have one mount beside the primary title before login"
+            );
+            Assert(
+                registry.Contains("WatchedProperty.OptionItem", StringComparison.Ordinal)
+                    && registry.Contains("SetItemText", StringComparison.Ordinal),
+                "localized dropdown items must update immediately with the selected language"
+            );
+        }
+    );
+
+    Run(
         "startup performance catalog is closed, localized, and watchdog-owned",
         () =>
         {
@@ -545,8 +648,10 @@ try
                 Assert(
                     !string.IsNullOrWhiteSpace(definition.TitleKo)
                         && !string.IsNullOrWhiteSpace(definition.TitleEn)
+                        && !string.IsNullOrWhiteSpace(definition.TitleZh)
                         && !string.IsNullOrWhiteSpace(definition.WatchdogKo)
-                        && !string.IsNullOrWhiteSpace(definition.WatchdogEn),
+                        && !string.IsNullOrWhiteSpace(definition.WatchdogEn)
+                        && !string.IsNullOrWhiteSpace(definition.WatchdogZh),
                     $"localized stage copy missing for {definition.Id}"
                 );
                 Assert(
@@ -562,6 +667,17 @@ try
                         "[\\uAC00-\\uD7AF]"
                     ),
                     $"English title contains Hangul for {definition.Id}"
+                );
+                Assert(
+                    System.Text.RegularExpressions.Regex.IsMatch(
+                        definition.TitleZh,
+                        "[\\u3400-\\u9FFF]"
+                    )
+                        && !System.Text.RegularExpressions.Regex.IsMatch(
+                            definition.TitleZh,
+                            "[\\uAC00-\\uD7AF]"
+                        ),
+                    $"Simplified Chinese title missing or contains Hangul for {definition.Id}"
                 );
 
                 if (definition.WatchdogPolicy == StartupWatchdogPolicy.NoneForUserWait)
@@ -911,7 +1027,7 @@ try
                         StringComparison.Ordinal
                     )
                     && androidApp.Contains(
-                        "showStartupOverlay(wipingAtlas)",
+                        "showStartupOverlay(wipingAtlas || debugAtlasOverlayPreview)",
                         StringComparison.Ordinal
                     )
                     && androidApp.Contains(
@@ -976,9 +1092,12 @@ try
                     )
                     && tracker.Contains("TotalElapsedUsec", StringComparison.Ordinal)
                     && tracker.Contains("_postPlaySinceUsec", StringComparison.Ordinal)
-                    && overlay.Contains("Loc.Tr(\"단계 \", \"Stage \")", StringComparison.Ordinal)
                     && overlay.Contains(
-                        "Loc.Tr(\" · 전체 \", \" · Total \")",
+                        "Loc.Tr(\"단계 \", \"Stage \", \"阶段 \")",
+                        StringComparison.Ordinal
+                    )
+                    && overlay.Contains(
+                        "Loc.Tr(\" · 전체 \", \" · Total \", \" · 总计 \")",
                         StringComparison.Ordinal
                     )
                     && androidApp.Contains(
@@ -1065,6 +1184,15 @@ try
                         StringComparison.Ordinal
                     ),
                 "watchdog UI proof must use a bounded debug-only startup-stage hold"
+            );
+            Assert(
+                androidApp.Contains("debug_preview_atlas_overlay", StringComparison.Ordinal)
+                    && androidApp.Contains(
+                        "showStartupOverlay(wipingAtlas || debugAtlasOverlayPreview)",
+                        StringComparison.Ordinal
+                    )
+                    && androidApp.Contains("no cache mutation", StringComparison.Ordinal),
+                "atlas overlay proof must reuse production copy without deleting cache"
             );
             int gameReady = launcherPatches.IndexOf(
                 "StartupPerformanceTracker.MarkGameReady()",
