@@ -142,17 +142,25 @@ internal sealed class StartupProgressOverlay : Control
                 return;
 
             StartupStageDefinition definition = StartupStageCatalog.Get(activeStage);
-            string title = Loc.IsKo ? definition.TitleKo : definition.TitleEn;
-            string watchdog = Loc.IsKo ? definition.WatchdogKo : definition.WatchdogEn;
+            string title = Loc.Select(
+                definition.TitleKo,
+                definition.TitleEn,
+                definition.TitleZh
+            );
+            string watchdog = Loc.Select(
+                definition.WatchdogKo,
+                definition.WatchdogEn,
+                definition.WatchdogZh
+            );
             app.Call(
                 "showManagedStartupProgress",
                 (int)activeStage,
                 title,
                 BuildCompletedStageText(),
-                Loc.Tr("진행 중 · ", "In progress · "),
-                Loc.Tr("단계 ", "Stage "),
-                Loc.Tr(" · 전체 ", " · Total "),
-                Loc.Tr("초", "s"),
+                Loc.Tr("진행 중 · ", "In progress · ", "进行中 · "),
+                Loc.Tr("단계 ", "Stage ", "阶段 "),
+                Loc.Tr(" · 전체 ", " · Total ", " · 总计 "),
+                Loc.Tr("초", "s", "秒"),
                 snapshot.ActiveElapsedUsec,
                 snapshot.TotalElapsedUsec,
                 snapshot.Progress.Done,
@@ -179,13 +187,18 @@ internal sealed class StartupProgressOverlay : Control
             return;
 
         StartupStageDefinition definition = StartupStageCatalog.Get(activeStage);
-        _statusLabel.Text = Loc.IsKo ? definition.TitleKo : definition.TitleEn;
+        _statusLabel.Text = Loc.Select(
+            definition.TitleKo,
+            definition.TitleEn,
+            definition.TitleZh
+        );
 
         long elapsedSeconds = snapshot.ActiveElapsedUsec / 1_000_000;
         long totalElapsedSeconds = snapshot.TotalElapsedUsec / 1_000_000;
         var timingKo = $"단계 {elapsedSeconds}초 · 전체 {totalElapsedSeconds}초";
         var timingEn = $"Stage {elapsedSeconds}s · Total {totalElapsedSeconds}s";
-        string timing = Loc.IsKo ? timingKo : timingEn;
+        var timingZh = $"阶段 {elapsedSeconds}秒 · 总计 {totalElapsedSeconds}秒";
+        string timing = Loc.Select(timingKo, timingEn, timingZh);
         if (
             definition.ProgressKind != StartupProgressKind.Indeterminate
             && snapshot.Progress.IsKnown
@@ -200,12 +213,17 @@ internal sealed class StartupProgressOverlay : Control
             _progressBar.Visible = false;
             var progressKo = $"진행 중 · {timingKo}";
             var progressEn = $"In progress · {timingEn}";
-            _detailLabel.Text = Loc.IsKo ? progressKo : progressEn;
+            var progressZh = $"进行中 · {timingZh}";
+            _detailLabel.Text = Loc.Select(progressKo, progressEn, progressZh);
         }
 
         if (snapshot.WatchdogPolicy != StartupWatchdogPolicy.NoneForUserWait)
         {
-            string watchdog = Loc.IsKo ? definition.WatchdogKo : definition.WatchdogEn;
+            string watchdog = Loc.Select(
+                definition.WatchdogKo,
+                definition.WatchdogEn,
+                definition.WatchdogZh
+            );
             _detailLabel.Text = $"{watchdog} · {timing}";
         }
 
@@ -222,7 +240,11 @@ internal sealed class StartupProgressOverlay : Control
             .Select(item =>
             {
                 var definition = StartupStageCatalog.Get(item.Stage);
-                string title = Loc.IsKo ? definition.TitleKo : definition.TitleEn;
+                string title = Loc.Select(
+                    definition.TitleKo,
+                    definition.TitleEn,
+                    definition.TitleZh
+                );
                 string marker = item.Terminal switch
                 {
                     StartupStageTerminal.Completed => "✓",

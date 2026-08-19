@@ -10,6 +10,7 @@ using System.Text;
 using System.Threading;
 using Godot;
 using HarmonyLib;
+using STS2Mobile.Launcher.Components;
 
 namespace STS2Mobile.Patches;
 
@@ -257,14 +258,14 @@ public static class LanMultiplayerPatcher
             ipContainer.AddThemeConstantOverride("separation", 10);
 
             var ipEdit = new LineEdit();
-            ipEdit.PlaceholderText = "Enter host IP address";
+            ipEdit.PlaceholderText = Loc.Authored("Enter host IP address");
             ipEdit.Text = LoadLastIp();
             ipEdit.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
             ipEdit.AddThemeFontSizeOverride("font_size", 28);
             _ipLineEdit = ipEdit;
 
             var joinBtn = new Button();
-            joinBtn.Text = "JOIN";
+            joinBtn.Text = Loc.Authored("JOIN");
             joinBtn.CustomMinimumSize = new Vector2(100, 0);
             joinBtn.AddThemeFontSizeOverride("font_size", 28);
 

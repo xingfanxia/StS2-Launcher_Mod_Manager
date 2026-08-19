@@ -289,7 +289,8 @@ public class ShaderWarmupScreen : Control
             _statusLabel.Text = Loc.Tr("완료", "Done");
             var completionKo = $"셰이더 {seenShaderKeys.Count}개 · {sw.ElapsedMilliseconds}ms";
             var completionEn = $"{seenShaderKeys.Count} shaders · {sw.ElapsedMilliseconds}ms";
-            _detailLabel.Text = Loc.IsKo ? completionKo : completionEn;
+            var completionZh = $"{seenShaderKeys.Count} 个着色器 · {sw.ElapsedMilliseconds}ms";
+            _detailLabel.Text = Loc.Select(completionKo, completionEn, completionZh);
             PatchHelper.Log(
                 $"[ShaderWarmup] Completed: {seenShaderKeys.Count} streamed materials "
                     + $"in {sw.ElapsedMilliseconds}ms"
@@ -427,7 +428,8 @@ public class ShaderWarmupScreen : Control
         }
         var progressKo = $"검색 {processed} / {Math.Max(total, 1)} · 셰이더 {shaderCount}개";
         var progressEn = $"Scanning {processed} / {Math.Max(total, 1)} · {shaderCount} shaders";
-        _detailLabel.Text = Loc.IsKo ? progressKo : progressEn;
+        var progressZh = $"扫描 {processed} / {Math.Max(total, 1)} · {shaderCount} 个着色器";
+        _detailLabel.Text = Loc.Select(progressKo, progressEn, progressZh);
 
         // A long stretch of non-material scenes would otherwise run without the
         // batch flush yields above. Keep input/rendering responsive regardless.

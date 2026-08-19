@@ -215,7 +215,11 @@ public static class ModGuardAlert
                     $"The '{modName}' mod encountered an error.\n"
                         + $"({exceptionType})\n\n"
                         + "The game can continue, but disable this mod in Mod Hub if the problem repeats.\n\n"
-                        + "To hide this alert, turn off the Debug toggle in the top-right of the launcher."
+                        + "To hide this alert, turn off the Debug toggle in the top-right of the launcher.",
+                    $"mod“{modName}”发生错误。\n"
+                        + $"（{exceptionType}）\n\n"
+                        + "游戏可以继续运行；如果问题反复出现，请在 Mod Hub 中禁用该 mod。\n\n"
+                        + "若不想看到此提醒，请关闭启动器右上角的 Debug 开关。"
                 ),
                 AutowrapMode = TextServer.AutowrapMode.WordSmart,
                 CustomMinimumSize = new Vector2(680, 0),

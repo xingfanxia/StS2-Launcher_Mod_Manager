@@ -15,6 +15,18 @@ bash -n "$TOOL_DIR/capture.sh" "$TOOL_DIR/run-matrix.sh" "$SCRIPT_DIR/fake-adb.s
 
 grep -q '안전모드로계속' "$TOOL_DIR/audit-screenshot.swift" \
     || fail "screenshot Safe Mode locator does not support Korean"
+grep -q 'language_selector_center_normalized' "$TOOL_DIR/audit-screenshot.swift" \
+    || fail "screenshot audit cannot locate the Simplified Chinese selector"
+grep -q -- '--require-chinese' "$TOOL_DIR/audit-screenshot.swift" \
+    || fail "screenshot audit cannot require visible Simplified Chinese"
+grep -q -- '--require-no-tofu' "$TOOL_DIR/audit-screenshot.swift" \
+    || fail "screenshot audit cannot reject missing glyph boxes"
+grep -q '选择游戏版本' "$TOOL_DIR/audit-screenshot.swift" \
+    || fail "branch picker locator does not support Simplified Chinese"
+grep -q '安全模式继续' "$TOOL_DIR/audit-screenshot.swift" \
+    || fail "Safe Mode locator does not support Simplified Chinese"
+grep -q 'automaticObservations' "$TOOL_DIR/audit-screenshot.swift" \
+    || fail "Hangul residue check still relies on a forced-language OCR pass"
 
 grep -q 'Launcher ready for PLAY' "$TOOL_DIR/run-matrix.sh" \
     || fail "matrix does not wait for the truthful PLAY-ready boundary"

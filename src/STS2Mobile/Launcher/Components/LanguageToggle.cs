@@ -3,33 +3,69 @@ using Godot;
 
 namespace STS2Mobile.Launcher.Components;
 
-// Self-contained KR/EN switch. Keeping the state, styling, and persistence out
-// of LauncherView leaves only one mount point in that frequently-updated file.
-public sealed class LanguageToggle : StyledButton
+// Prominent three-language selector. The legacy filename is retained to keep
+// upstream merges narrow; the public type describes the new dropdown behavior.
+public sealed class LanguageSelector : HBoxContainer
 {
-    private readonly float _scale;
+    private readonly OptionButton _option;
     private readonly Action<string> _showStatus;
     private LocalizationAuditSnapshot? _auditCandidate;
     private LocalizationAuditSnapshot? _lastReportedAudit;
     private int _auditStableTicks;
+    private bool _updatingSelection;
 
-    public LanguageToggle(float scale, Action<string> showStatus)
-        : base("", scale, fontSize: 11, height: 28)
+    public LanguageSelector(float scale, Action<string> showStatus)
     {
-        _scale = scale;
         _showStatus = showStatus;
-        ToggleMode = true;
-        ButtonPressed = Loc.IsEnglish;
-        CustomMinimumSize = new Vector2(Ui.S(scale, 82), CustomMinimumSize.Y);
+        AddThemeConstantOverride("separation", Ui.S(scale, 6));
+        CustomMinimumSize = new Vector2(Ui.S(scale, 180), Ui.S(scale, Ui.TouchHeight));
+
+        var glyph = new StyledLabel(
+            "LANG",
+            scale,
+            fontSize: 11,
+            provenance: TextProvenance.ExternalContent
+        );
+        glyph.VerticalAlignment = VerticalAlignment.Center;
+        glyph.AddThemeColorOverride("font_color", Ui.Accent);
+        AddChild(glyph);
+
+        _option = new OptionButton();
+        _option.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        _option.CustomMinimumSize = new Vector2(
+            Ui.S(scale, 145),
+            Ui.S(scale, Ui.TouchHeight)
+        );
+        _option.AddThemeFontSizeOverride("font_size", Ui.S(scale, 14));
+        _option.AddThemeColorOverride("font_color", Ui.TextPrimary);
+        _option.AddThemeColorOverride("font_hover_color", Ui.TextPrimary);
+        _option.AddThemeColorOverride("font_pressed_color", Ui.TextPrimary);
+        _option.AddThemeColorOverride("font_focus_color", Ui.TextPrimary);
+
+        var normal = Ui.Filled(scale, Ui.Card);
+        normal.BorderColor = Ui.Accent;
+        normal.SetBorderWidthAll(Math.Max(1, Ui.S(scale, 1)));
+        normal.ContentMarginLeft = Ui.S(scale, 12);
+        normal.ContentMarginRight = Ui.S(scale, 10);
+        _option.AddThemeStyleboxOverride("normal", normal);
+        _option.AddThemeStyleboxOverride("hover", Ui.Filled(scale, Ui.CardHover));
+        _option.AddThemeStyleboxOverride("pressed", Ui.Filled(scale, Ui.CardDown));
+        _option.AddThemeStyleboxOverride("focus", Ui.Outline(scale, Ui.Accent));
+
+        var popup = _option.GetPopup();
+        popup.AddThemeFontSizeOverride("font_size", Ui.S(scale, 15));
+        popup.AddThemeConstantOverride("v_separation", Ui.S(scale, 14));
+        popup.AddThemeColorOverride("font_color", Ui.TextPrimary);
+
+        _option.AddItem("한국어", (int)LauncherLanguage.Korean);
+        _option.AddItem("English", (int)LauncherLanguage.English);
+        _option.AddItem("简体中文", (int)LauncherLanguage.SimplifiedChinese);
         RefreshAppearance();
-        Toggled += OnToggled;
+        _option.ItemSelected += OnItemSelected;
+        AddChild(_option);
 
         var refreshTimer = new Timer { WaitTime = 0.25, Autostart = true };
-        refreshTimer.Timeout += () =>
-        {
-            if (Loc.IsEnglish)
-                RefreshAndAudit();
-        };
+        refreshTimer.Timeout += RefreshAndAudit;
         AddChild(refreshTimer);
     }
 
@@ -54,8 +90,9 @@ public sealed class LanguageToggle : StyledButton
     {
         _lastReportedAudit = audit;
         var message =
-            $"[LocalizationAudit] visible={audit.VisibleText} "
-            + $"authored_hangul={audit.UntranslatedLauncherText} "
+            $"[LocalizationAudit] language={LauncherLanguageCodes.ToPreferenceValue(Loc.CurrentLanguage)} "
+            + $"visible={audit.VisibleText} "
+            + $"untranslated={audit.UntranslatedLauncherText} "
             + $"preserved_external_hangul={audit.PreservedExternalText}";
         if (warning)
             GD.PushWarning(message);
@@ -63,20 +100,40 @@ public sealed class LanguageToggle : StyledButton
             GD.Print(message);
     }
 
-    private void OnToggled(bool englishEnabled)
+    private void OnItemSelected(long index)
     {
-        Loc.SetEnglish(englishEnabled);
+        if (_updatingSelection)
+            return;
+        var language = (LauncherLanguage)_option.GetItemId((int)index);
+        if (language == Loc.CurrentLanguage)
+            return;
+
+        Loc.SetLanguage(language);
+        _auditCandidate = null;
+        _lastReportedAudit = null;
+        _auditStableTicks = 0;
         RefreshAppearance();
-        _showStatus?.Invoke(Loc.Tr("한국어로 전환했습니다.", "English enabled."));
+        _showStatus?.Invoke(
+            Loc.Select(
+                "한국어로 전환했습니다.",
+                "English enabled.",
+                "已切换到简体中文。"
+            )
+        );
     }
 
     private void RefreshAppearance()
     {
-        var englishEnabled = Loc.IsEnglish;
-        Text = englishEnabled ? "EN · ON" : "EN · OFF";
-        TooltipText = englishEnabled
-            ? "English is enabled. Tap to use Korean."
-            : "영어로 전환하려면 누르세요.";
-        ApplyVariant(_scale, englishEnabled ? ButtonVariant.Accent : ButtonVariant.Secondary);
+        _updatingSelection = true;
+        for (var index = 0; index < _option.ItemCount; index++)
+        {
+            if (_option.GetItemId(index) == (int)Loc.CurrentLanguage)
+            {
+                _option.Selected = index;
+                break;
+            }
+        }
+        _option.TooltipText = Loc.Select("언어 선택", "Select language", "选择语言");
+        _updatingSelection = false;
     }
 }

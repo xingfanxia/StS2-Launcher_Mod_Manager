@@ -87,5 +87,14 @@ wait for the real dynamic UI instead of guessing with a fixed network delay:
 ```sh
 swift tools/device-stability/audit-screenshot.swift screenshot.png \
   --require-no-hangul \
+  --require-no-tofu \
+  --require-chinese \
+  --locate-language-selector \
   --locate-branch-picker
 ```
+
+For the launcher language proof, `--require-chinese` requires at least one
+recognized CJK line and `--locate-language-selector` returns only the normalized
+center of `简体中文`; recognized text itself is never printed. The unforced plus
+high-confidence script-residue check avoids classifying Han glyphs as Korean, while
+`--require-no-tofu` rejects common OCR representations of missing-glyph boxes.

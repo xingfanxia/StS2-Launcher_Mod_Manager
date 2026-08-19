@@ -9,21 +9,24 @@ internal static class LauncherLanguagePreference
     private const string PreferencesSection = "localization";
     private const string LanguageKey = "language";
 
-    private static bool? _isKorean;
+    private static LauncherLanguage? _language;
 
-    public static bool IsKorean => _isKorean ??= LoadIsKorean();
+    public static LauncherLanguage Current => _language ??= Load();
 
-    public static bool SetEnglish(bool enabled)
+    public static bool Set(LauncherLanguage language)
     {
-        var nextIsKorean = !enabled;
-        if (_isKorean == nextIsKorean)
+        if (_language == language)
             return false;
 
-        _isKorean = nextIsKorean;
+        _language = language;
         try
         {
             var config = new ConfigFile();
-            config.SetValue(PreferencesSection, LanguageKey, enabled ? "en" : "ko");
+            config.SetValue(
+                PreferencesSection,
+                LanguageKey,
+                LauncherLanguageCodes.ToPreferenceValue(language)
+            );
             var error = config.Save(PreferencesPath);
             if (error != Error.Ok)
                 GD.PushWarning($"Could not save launcher language preference: {error}");
@@ -36,7 +39,7 @@ internal static class LauncherLanguagePreference
         return true;
     }
 
-    private static bool LoadIsKorean()
+    private static LauncherLanguage Load()
     {
         try
         {
@@ -44,19 +47,18 @@ internal static class LauncherLanguagePreference
             if (config.Load(PreferencesPath) == Error.Ok)
             {
                 var saved = (string)config.GetValue(PreferencesSection, LanguageKey, "");
-                if (saved == "ko")
-                    return true;
-                if (saved == "en")
-                    return false;
+                if (LauncherLanguageCodes.TryParsePreference(saved, out var language))
+                    return language;
             }
 
-            var language = OS.GetLocaleLanguage();
-            return !string.IsNullOrEmpty(language)
-                && language.StartsWith("ko", StringComparison.OrdinalIgnoreCase);
+            var locale = OS.GetLocale();
+            if (string.IsNullOrWhiteSpace(locale))
+                locale = OS.GetLocaleLanguage();
+            return LauncherLanguageCodes.FromSystemLocale(locale);
         }
         catch
         {
-            return false;
+            return LauncherLanguage.English;
         }
     }
 }

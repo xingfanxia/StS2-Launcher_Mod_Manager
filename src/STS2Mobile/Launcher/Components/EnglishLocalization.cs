@@ -33,6 +33,7 @@ internal static class EnglishLocalization
         ["동기화 적용 중..."] = "Applying sync...",
         ["한국어로 전환했습니다."] = "Switched to Korean.",
         ["영어로 전환하려면 누르세요."] = "Tap to switch to English.",
+        ["한국어"] = "Korean",
 
         ["프로필별로 로컬과 Steam Cloud의 진행도를 확인하고 개별적으로 동기화할 수 있습니다."] =
             "Review local and Steam Cloud progress for each profile and sync them individually.",

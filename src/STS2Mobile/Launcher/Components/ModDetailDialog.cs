@@ -91,7 +91,7 @@ public class ModDetailDialog : ColorRect
         if (!string.IsNullOrWhiteSpace(warning))
         {
             var warn = new StyledLabel(
-                warning,
+                Loc.Authored(warning),
                 scale,
                 fontSize: 12,
                 align: HorizontalAlignment.Left,

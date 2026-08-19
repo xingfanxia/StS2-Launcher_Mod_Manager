@@ -109,6 +109,8 @@ public class WorkshopBrowserPane : VBoxContainer
         _sortOption.AddItem("Trending", (int)WorkshopQuerySort.Trending);
         _sortOption.AddItem("Last Updated", (int)WorkshopQuerySort.LastUpdated);
         _sortOption.AddItem("Top Rated", (int)WorkshopQuerySort.TopRated);
+        for (var itemIndex = 0; itemIndex < _sortOption.ItemCount; itemIndex++)
+            Loc.Watch(_sortOption, itemIndex);
         _sortOption.Selected = 0;
         _sortOption.ItemSelected += _ => OnSearchPressed();
         filterRow.AddChild(_sortOption);
@@ -998,7 +1000,7 @@ public class WorkshopBrowserPane : VBoxContainer
     // Must run on the main thread.
     private void SetStatus(string text, Color color)
     {
-        _statusLabel.Text = text;
+        _statusLabel.Text = Loc.Authored(text);
         _statusLabel.AddThemeColorOverride("font_color", color);
     }
 

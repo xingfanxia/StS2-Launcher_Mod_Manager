@@ -56,11 +56,17 @@ public class LauncherController
     public void Start()
     {
         _model.SessionStateChanged += s => _runOnMainThread(() => UpdateUI(s));
-        _model.LogReceived += msg => _runOnMainThread(() => _view.AppendLog(msg));
+        _model.LogReceived += msg =>
+            _runOnMainThread(() => _view.AppendLog(msg, TextProvenance.ExternalContent));
         PatchHelper.LogEmitted += msg =>
         {
             if (msg.StartsWith("[Cloud]"))
-                _runOnMainThread(() => _view.AppendLog(msg));
+                _runOnMainThread(() =>
+                    _view.AppendLog(
+                        msg,
+                        TextProvenance.LauncherDiagnosticWithExternalContent
+                    )
+                );
         };
         _model.CodeNeeded += wasIncorrect =>
             _runOnMainThread(() =>
@@ -75,9 +81,10 @@ public class LauncherController
                     p.Percentage,
                     $"{LauncherModel.FormatSize(p.DownloadedBytes)} / {LauncherModel.FormatSize(p.TotalBytes)} ({p.Percentage:F1}%)"
                 );
-                _view.AppendLog(p.CurrentFile);
+                _view.AppendLog(p.CurrentFile, TextProvenance.ExternalContent);
             });
-        _model.DownloadLogReceived += msg => _runOnMainThread(() => _view.AppendLog(msg));
+        _model.DownloadLogReceived += msg =>
+            _runOnMainThread(() => _view.AppendLog(msg, TextProvenance.ExternalContent));
         _model.DownloadCompleted += () =>
             _runOnMainThread(() =>
             {
