@@ -1,5 +1,6 @@
 using STS2Mobile.Launcher;
 using STS2Mobile.Launcher.Components;
+using STS2Mobile.Modding;
 using STS2Mobile.Steam;
 
 var root = Path.Combine(Path.GetTempPath(), $"sts2-stability-tests-{Guid.NewGuid():N}");
@@ -126,7 +127,7 @@ try
     );
 
     Run(
-        "Mono-invalid mod IL is attributed and quarantined without rewriting third-party DLLs",
+        "Mono-invalid mod IL is attributed, isolated, and safely auto-disabled",
         () =>
         {
             var repository = FindRepositoryRoot();
@@ -154,6 +155,9 @@ try
                     "GodotApp.java"
                 )
             );
+            var autoDisabler = File.ReadAllText(
+                Path.Combine(repository, "src", "STS2Mobile", "Modding", "ModAutoDisabler.cs")
+            );
             Assert(
                 loaderPatch.Contains(
                     "nameof(CallModInitializerTranspiler)",
@@ -171,13 +175,77 @@ try
                         "ModAssemblyRegistry.IsModAssembly",
                         StringComparison.Ordinal
                     )
+                    && loaderPatch.Contains("TryDisableForFutureLaunch", StringComparison.Ordinal)
+                    && autoDisabler.Contains("ModStasher.Disable(info)", StringComparison.Ordinal)
+                    && autoDisabler.Contains(
+                        "The owning enabled mod folder could not be resolved uniquely.",
+                        StringComparison.Ordinal
+                    )
                     && !compatibility.Contains("LoadFromStream", StringComparison.Ordinal)
                     && android.Contains(
                         "showModRuntimeCompatibilityNotice",
                         StringComparison.Ordinal
                     )
                     && !android.Contains("sts2_mod_compat", StringComparison.Ordinal),
-                "Mono-invalid mod quarantine changed DLL bytes or lost the initializer boundary"
+                "Mono-invalid mod handling lost attribution, fail-closed ownership, or byte preservation"
+            );
+
+            var candidates = new[]
+            {
+                new ModAutoDisableCandidate("broken.mod", "/mods/broken", true),
+                new ModAutoDisableCandidate("healthy.mod", "/mods/healthy", true),
+            };
+            Assert(
+                ModAutoDisablePolicy.SelectTopLevelDirectory("broken.mod", "", "/mods", candidates)
+                    == "/mods/broken",
+                "a unique exact manifest id should resolve when an assembly was byte-loaded"
+            );
+            Assert(
+                ModAutoDisablePolicy.SelectTopLevelDirectory(
+                    "broken.mod",
+                    "/mods/broken/bin/broken.dll",
+                    "/mods",
+                    candidates
+                ) == "/mods/broken",
+                "an assembly inside the unique owning folder should resolve"
+            );
+            Assert(
+                ModAutoDisablePolicy.SelectTopLevelDirectory(
+                    "broken.mod",
+                    "/mods/healthy/broken.dll",
+                    "/mods",
+                    candidates
+                ) == null,
+                "a known assembly/manifest folder mismatch must fail closed"
+            );
+            Assert(
+                ModAutoDisablePolicy.SelectTopLevelDirectory(
+                    "broken.mod",
+                    "",
+                    "/mods",
+                    candidates.Append(
+                        new ModAutoDisableCandidate("broken.mod", "/mods/duplicate", true)
+                    )
+                ) == null,
+                "duplicate ids in different folders must never pick a victim"
+            );
+            Assert(
+                ModAutoDisablePolicy.SelectTopLevelDirectory(
+                    "broken.mod",
+                    "",
+                    "/mods",
+                    new[] { new ModAutoDisableCandidate("broken.mod", "/mods/../outside", true) }
+                ) == null,
+                "a traversal candidate must never cross the enabled-mod root"
+            );
+            Assert(
+                ModAutoDisablePolicy.SelectTopLevelDirectory(
+                    "broken.mod",
+                    "",
+                    "/mods",
+                    new[] { new ModAutoDisableCandidate("broken.mod", "/mods/bundle", false) }
+                ) == null,
+                "a shared top-level folder must remain a manual user decision"
             );
         }
     );
@@ -597,9 +665,7 @@ try
             var view = File.ReadAllText(
                 Path.Combine(repository, "src", "STS2Mobile", "Launcher", "LauncherView.cs")
             );
-            var registry = File.ReadAllText(
-                Path.Combine(components, "LocalizedTextRegistry.cs")
-            );
+            var registry = File.ReadAllText(Path.Combine(components, "LocalizedTextRegistry.cs"));
 
             Assert(
                 selector.Contains("class LanguageSelector", StringComparison.Ordinal)

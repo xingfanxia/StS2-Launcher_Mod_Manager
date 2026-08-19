@@ -305,7 +305,7 @@ public class GodotApp extends GodotActivity {
 		}
 	}
 
-	public void showModRuntimeCompatibilityNotice(String modName) {
+	public void showModRuntimeCompatibilityNotice(String modName, boolean autoDisabled) {
 		String safeName = modName == null ? "mod" : modName.trim();
 		safeName = safeName.replace('\r', '_').replace('\n', '_').replace('\t', '_');
 		if (safeName.isEmpty()) safeName = "mod";
@@ -313,13 +313,21 @@ public class GodotApp extends GodotActivity {
 		String displayName = safeName;
 		runOnUiThread(() -> Toast.makeText(
 				this,
-				nativeText(
-						"'" + displayName + "' 모드의 DLL은 Android 런타임과 호환되지 않습니다. "
-								+ "모드를 업데이트하거나 비활성화하세요.",
-						"The '" + displayName + "' mod DLL is not compatible with the Android "
-								+ "runtime. Update or disable the mod.",
-						"mod“" + displayName + "”的 DLL 与 Android 运行时不兼容。"
-								+ "请更新或禁用该 mod。"),
+				autoDisabled
+						? nativeText(
+								"'" + displayName + "' 모드의 DLL은 Android 런타임과 호환되지 않아 "
+										+ "자동으로 비활성화했습니다. 업데이트 후 Mod Hub에서 다시 활성화할 수 있습니다.",
+								"The '" + displayName + "' mod DLL is not compatible with the Android "
+										+ "runtime, so it was disabled automatically. Update it before re-enabling it in Mod Hub.",
+								"mod“" + displayName + "”的 DLL 与 Android 运行时不兼容，已自动禁用。"
+										+ "更新后可在 Mod Hub 中重新启用。")
+						: nativeText(
+								"'" + displayName + "' 모드의 DLL은 Android 런타임과 호환되지 않습니다. "
+										+ "자동 비활성화하지 못했습니다. 다음 실행 전에 Mod Hub에서 비활성화하세요.",
+								"The '" + displayName + "' mod DLL is not compatible with the Android "
+										+ "runtime and could not be disabled automatically. Disable it in Mod Hub before the next launch.",
+								"mod“" + displayName + "”的 DLL 与 Android 运行时不兼容，且无法自动禁用。"
+										+ "请在下次启动前到 Mod Hub 中将其禁用。"),
 				Toast.LENGTH_LONG).show());
 	}
 

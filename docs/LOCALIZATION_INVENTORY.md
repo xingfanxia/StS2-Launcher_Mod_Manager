@@ -25,11 +25,11 @@ source inventory is:
 | `translation-catalog` | 450 | English and zh-Hans exact/pattern/phrase entries are paired |
 | `ui-stage-catalog` | 32 | every startup title/watchdog has KR, EN, and zh-Hans copy |
 | `ui-adjacent-pair` | 8 | adjacent `*Ko/*En/*Zh` dynamic text is complete |
-| `android-native-pair` | 14 | Java-visible copy is inside `nativeText(ko, en, zh)` |
+| `android-native-pair` | 16 | Java-visible copy is inside `nativeText(ko, en, zh)` |
 | `ui-approved-token` | 4 | product/legal/language-name tokens intentionally remain unchanged |
 | `non-ui-log` | 3 | diagnostic-only output, not rendered UI |
 | `non-ui-comment` | 209 | source documentation only |
-| **Total** | **1,186** | 62 localization-bearing source files |
+| **Total** | **1,188** | 62 localization-bearing source files |
 
 The committed negative fixture runner first checks the real tree, injects one
 untranslated launcher string, and requires the audit to reject it:

@@ -47,6 +47,10 @@
       Link="LauncherLanguage.cs"
     />
     <Compile
+      Include="../../src/STS2Mobile/Modding/ModAutoDisablePolicy.cs"
+      Link="ModAutoDisablePolicy.cs"
+    />
+    <Compile
       Include="../../src/STS2Mobile/Launcher/StartupPerformanceTimeline.cs"
       Link="StartupPerformanceTimeline.cs"
     />
