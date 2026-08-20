@@ -13,17 +13,36 @@ internal static class LauncherReleaseChannel
     public const string LatestReleasePageUrl =
         "https://github.com/" + Repository + "/releases/latest";
 
+    public static string GetExpectedApkAssetName(string version)
+    {
+        if (string.IsNullOrWhiteSpace(version))
+            return null;
+
+        var segmentHasDigit = false;
+        foreach (var character in version)
+        {
+            if (character >= '0' && character <= '9')
+            {
+                segmentHasDigit = true;
+                continue;
+            }
+
+            if (character != '.' || !segmentHasDigit)
+                return null;
+            segmentHasDigit = false;
+        }
+
+        return segmentHasDigit ? $"StS2Launcher-v{version}.apk" : null;
+    }
+
     // A release may contain checksums, debug builds, or unrelated APKs. Install
     // only the exact signed artifact produced by this repository's release job.
     public static bool IsExpectedApkAsset(string assetName, string version)
     {
-        if (string.IsNullOrWhiteSpace(assetName) || string.IsNullOrWhiteSpace(version))
+        var expectedName = GetExpectedApkAssetName(version);
+        if (string.IsNullOrWhiteSpace(assetName) || expectedName == null)
             return false;
-        return string.Equals(
-            assetName,
-            $"StS2Launcher-v{version}.apk",
-            StringComparison.OrdinalIgnoreCase
-        );
+        return string.Equals(assetName, expectedName, StringComparison.OrdinalIgnoreCase);
     }
 
     public static bool IsExpectedDownloadUrl(string downloadUrl)
@@ -39,5 +58,18 @@ internal static class LauncherReleaseChannel
             "/" + Repository + "/releases/download/",
             StringComparison.Ordinal
         );
+    }
+
+    public static bool IsExpectedDownloadUrl(string downloadUrl, string version)
+    {
+        var expectedName = GetExpectedApkAssetName(version);
+        return expectedName != null
+            && IsExpectedDownloadUrl(downloadUrl)
+            && Uri.TryCreate(downloadUrl, UriKind.Absolute, out var uri)
+            && string.Equals(
+                Uri.UnescapeDataString(uri.Segments[^1]),
+                expectedName,
+                StringComparison.OrdinalIgnoreCase
+            );
     }
 }

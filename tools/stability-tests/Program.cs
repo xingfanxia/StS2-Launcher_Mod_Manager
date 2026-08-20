@@ -1456,6 +1456,22 @@ try
                 ),
                 "automatic update checks still target upstream instead of this fork"
             );
+            var v047Asset = LauncherReleaseChannel.GetExpectedApkAssetName("0.4.7");
+            var v048Asset = LauncherReleaseChannel.GetExpectedApkAssetName("0.4.8");
+            Assert(
+                v047Asset == "StS2Launcher-v0.4.7.apk"
+                    && v048Asset == "StS2Launcher-v0.4.8.apk"
+                    && !string.Equals(v047Asset, v048Asset, StringComparison.Ordinal),
+                "different launcher versions reused the same installer cache URI"
+            );
+            Assert(
+                LauncherReleaseChannel.GetExpectedApkAssetName("") == null
+                    && LauncherReleaseChannel.GetExpectedApkAssetName("v0.4.8") == null
+                    && LauncherReleaseChannel.GetExpectedApkAssetName("0.4.8-debug") == null
+                    && LauncherReleaseChannel.GetExpectedApkAssetName("０.４.８") == null
+                    && LauncherReleaseChannel.GetExpectedApkAssetName("0.4.8/other") == null,
+                "an untrusted version crossed the installer filename boundary"
+            );
             Assert(
                 LauncherReleaseChannel.IsExpectedApkAsset("StS2Launcher-v0.4.6.apk", "0.4.6"),
                 "the canonical release APK was rejected"
@@ -1471,8 +1487,17 @@ try
             );
             Assert(
                 LauncherReleaseChannel.IsExpectedDownloadUrl(
-                    "https://github.com/xingfanxia/StS2-Launcher_Mod_Manager/releases/download/v0.4.6/StS2Launcher-v0.4.6.apk"
+                    "https://github.com/xingfanxia/StS2-Launcher_Mod_Manager/releases/download/v0.4.6/StS2Launcher-v0.4.6.apk",
+                    "0.4.6"
                 )
+                    && !LauncherReleaseChannel.IsExpectedDownloadUrl(
+                        "https://github.com/xingfanxia/StS2-Launcher_Mod_Manager/releases/download/v0.4.6/StS2Launcher-v0.4.6.apk",
+                        "0.4.7"
+                    )
+                    && !LauncherReleaseChannel.IsExpectedDownloadUrl(
+                        "https://github.com/xingfanxia/StS2-Launcher_Mod_Manager/releases/download/v0.4.6/StS2Launcher-v0.4.6.apk.sha256",
+                        "0.4.6"
+                    )
                     && !LauncherReleaseChannel.IsExpectedDownloadUrl(
                         "https://example.com/StS2Launcher-v0.4.6.apk"
                     )
@@ -1480,6 +1505,30 @@ try
                         "http://github.com/xingfanxia/StS2-Launcher_Mod_Manager/releases/download/v0.4.6/StS2Launcher-v0.4.6.apk"
                     ),
                 "a non-HTTPS or non-fork download URL crossed the update boundary"
+            );
+
+            var repository = FindRepositoryRoot();
+            var installer = File.ReadAllText(
+                Path.Combine(repository, "src", "STS2Mobile", "Steam", "AppUpdateInstaller.cs")
+            );
+            var controller = File.ReadAllText(
+                Path.Combine(repository, "src", "STS2Mobile", "Launcher", "LauncherController.cs")
+            );
+            Assert(
+                installer.Contains("string expectedVersion,", StringComparison.Ordinal)
+                    && installer.Contains(
+                        "LauncherReleaseChannel.GetExpectedApkAssetName(expectedVersion)",
+                        StringComparison.Ordinal
+                    )
+                    && !installer.Contains(
+                        "private const string ApkFileName = \"launcher_update.apk\"",
+                        StringComparison.Ordinal
+                    )
+                    && controller.Contains(
+                        "result.DownloadUrl,\n                    result.LatestVersion,",
+                        StringComparison.Ordinal
+                    ),
+                "the updater still exposes every release through one stale FileProvider URI"
             );
         }
     );

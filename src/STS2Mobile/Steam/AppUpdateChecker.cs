@@ -68,7 +68,7 @@ public static class AppUpdateChecker
                     var candidate = asset.TryGetProperty("browser_download_url", out var url)
                         ? url.GetString()
                         : null;
-                    if (LauncherReleaseChannel.IsExpectedDownloadUrl(candidate))
+                    if (LauncherReleaseChannel.IsExpectedDownloadUrl(candidate, latestVersion))
                         downloadUrl = candidate;
                     break;
                 }
