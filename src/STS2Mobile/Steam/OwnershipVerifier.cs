@@ -15,11 +15,18 @@ public class OwnershipVerifier
     private const uint AppId = 2868840;
 
     private readonly string _markerPath;
+    private readonly string _legacyMarkerPath;
     private readonly string _accountName;
 
     public OwnershipVerifier(string dataDir, string accountName)
     {
-        _markerPath = Path.Combine(dataDir, "ownership_verified.enc");
+        _legacyMarkerPath = Path.Combine(dataDir, "ownership_verified.enc");
+        _markerPath = AccountDataIsolation.IsValidSlot(AccountDataIsolation.ActiveSlot)
+            ? Path.Combine(
+                AccountDataIsolation.GetAccountRoot(dataDir, AccountDataIsolation.ActiveSlot),
+                "ownership_verified.enc"
+            )
+            : _legacyMarkerPath;
         _accountName = accountName;
     }
 
@@ -27,16 +34,21 @@ public class OwnershipVerifier
     {
         try
         {
-            if (!File.Exists(_markerPath))
-                return false;
-
             var godotApp = GetGodotApp();
-            var json = (string)godotApp?.Call("decryptString", File.ReadAllText(_markerPath));
-            if (json == null)
-                return false;
+            if (MarkerMatches(_markerPath, godotApp))
+                return true;
 
-            var marker = JsonSerializer.Deserialize<Marker>(json);
-            return marker.Account == _accountName;
+            // Upgrade path: copy a matching global v1 marker into the first
+            // account slot, preserving the original file and offline play.
+            if (_markerPath != _legacyMarkerPath && MarkerMatches(_legacyMarkerPath, godotApp))
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(_markerPath)!);
+                var temporary = _markerPath + ".tmp";
+                File.Copy(_legacyMarkerPath, temporary, overwrite: true);
+                File.Move(temporary, _markerPath, overwrite: true);
+                return true;
+            }
+            return false;
         }
         catch
         {
@@ -47,7 +59,7 @@ public class OwnershipVerifier
     // Queries Steam PICS for app ownership. On success, saves a permanent marker
     // and sets the connection's AppAccessToken for depot downloads. Returns true
     // if the account owns the game.
-    public async Task<bool> VerifyAsync(SteamConnection connection)
+    public async Task<bool> VerifyAsync(SteamConnection connection, bool persistMarker = true)
     {
         var result = await connection.Apps.PICSGetAccessTokens(AppId, null);
         bool owns = result.AppTokens.ContainsKey(AppId);
@@ -56,13 +68,14 @@ public class OwnershipVerifier
         {
             result.AppTokens.TryGetValue(AppId, out var token);
             connection.AppAccessToken = token;
-            SaveMarker();
+            if (persistMarker)
+                SaveMarker();
         }
 
         return owns;
     }
 
-    private void SaveMarker()
+    public void SaveMarker()
     {
         try
         {
@@ -82,6 +95,17 @@ public class OwnershipVerifier
         {
             PatchHelper.Log($"[Ownership] Failed to save marker: {ex.Message}");
         }
+    }
+
+    private bool MarkerMatches(string path, GodotObject godotApp)
+    {
+        if (!File.Exists(path) || godotApp == null)
+            return false;
+        var json = (string)godotApp.Call("decryptString", File.ReadAllText(path));
+        if (json == null)
+            return false;
+        var marker = JsonSerializer.Deserialize<Marker>(json);
+        return marker?.Account == _accountName;
     }
 
     private static GodotObject GetGodotApp()

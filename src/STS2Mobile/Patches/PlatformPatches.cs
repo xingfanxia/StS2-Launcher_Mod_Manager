@@ -7,6 +7,7 @@ using MegaCrit.Sts2.Core.Debug;
 using MegaCrit.Sts2.Core.Nodes;
 using MegaCrit.Sts2.Core.Platform.Null;
 using MegaCrit.Sts2.Core.Saves;
+using STS2Mobile.Steam;
 
 namespace STS2Mobile.Patches;
 
@@ -66,6 +67,16 @@ public static class PlatformPatches
             "GetRawLanguage",
             postfix: PatchHelper.Method(typeof(PlatformPatches), nameof(SanitizeRawLanguagePostfix))
         );
+
+        // Keep the game's logical save/cloud paths stable, but redirect local
+        // Godot disk access into the active opaque account slot. This preserves
+        // existing cloud filenames while preventing local cross-account reads.
+        PatchHelper.PatchCritical(
+            harmony,
+            typeof(GodotFileIo),
+            "GetFullPath",
+            postfix: PatchHelper.Method(typeof(PlatformPatches), nameof(AccountLocalPathPostfix))
+        );
     }
 
     public static bool InitializePlatformPrefix(ref Task<bool> __result)
@@ -101,6 +112,9 @@ public static class PlatformPatches
             __result = sanitized;
         }
     }
+
+    public static void AccountLocalPathPostfix(ref string __result) =>
+        __result = AccountDataIsolation.RewriteLocalGodotPath(__result);
 
     // Reduces a raw platform locale to a string new CultureInfo(...) is guaranteed
     // to accept: cut at the Java extension marker '#', drop BCP-47 extension chains

@@ -17,7 +17,8 @@ namespace STS2Mobile.Steam;
 // it — see CloudFileCache.LoadFileList for the cleanup side.
 public static class PendingUploadBatch
 {
-    private static string MarkerPath => Path.Combine(OS.GetDataDir(), "pending_upload_batch");
+    private static string MarkerPath =>
+        AccountDataIsolation.GetAccountPreferencePath(OS.GetDataDir(), "pending_upload_batch");
 
     // Called the instant BeginAppUploadBatch returns a batch_id — before any
     // file upload starts, so even a crash on the very first file still leaves
@@ -29,6 +30,7 @@ public static class PendingUploadBatch
             // tmp-then-move so a kill mid-write can't leave a truncated marker
             // that fails to parse next session (same pattern as CacheStamp).
             var tmpPath = MarkerPath + ".tmp";
+            Directory.CreateDirectory(Path.GetDirectoryName(MarkerPath)!);
             File.WriteAllText(tmpPath, batchId.ToString());
             if (File.Exists(MarkerPath))
                 File.Delete(MarkerPath);

@@ -23,10 +23,13 @@ Verified repository facts:
   `PlatformUtil.OpenInviteDialog`, which only supports a native Steam lobby and
   Steam overlay. It is therefore hidden for the current `PlatformType.None`
   mobile host.
-- The APK contains an Android ARM64 `libsteam_api.so`, but Valve added Android
-  ARM64 Steamworks libraries for Steam Frame's Lepton environment. The connected
-  ordinary Android phone has no Steam/Lepton package. Library presence alone is
-  not evidence that `SteamAPI.InitEx` can attach to a local Steam client.
+- The APK contains an Android ARM64 file named `libsteam_api.so`, but artifact
+  symbol/disassembly inspection proved it is this repository's
+  `src/stubs/steam_stub.c`, not Valve's runtime: `SteamAPI_Init` and
+  `SteamAPI_InitFlat` hard-code success, `SteamAPI_IsSteamRunning` hard-codes
+  false, and user/pipe handles are dummy constants. Calling it is not a native
+  Steamworks feasibility test and would create a false positive. Neither
+  connected ordinary Android phone exposes a Steam Frame/Lepton client package.
 - The launcher's SteamKit 3.4.0 package exposes `SteamFriends` and
   `SteamMatchmaking`, including friend enumeration, `CreateLobby`,
   `InviteToLobby`, lobby metadata, `JoinLobby`, and incoming
@@ -80,6 +83,15 @@ Acceptance for Phase 1:
 
 Start only after Phase 1 is green.
 
+Current status: implemented and verified with two designated controlled accounts.
+The bridge accepts only the exact App ID, schema, transport, launcher/game builds,
+canonical bounded ENet endpoints, short expiry, trusted-friend classification,
+and a previously unseen bounded nonce. Its metadata contains no Steam ID,
+account, credential, friend-list, save, path, or mod-list. The signed two-device
+proof covers exact-recipient search, send, decline, accept, ENet lobby entry,
+disconnect/re-invite/rejoin, and short/long background lifecycle behavior; see
+`docs/MULTIPLAYER_INVITE_PROOF.md`.
+
 1. Extend `SteamConnection` with owned `SteamFriends` and `SteamMatchmaking`
    handlers and bounded events. Hold the existing connection open only while a
    multiplayer host/join surface needs invite callbacks.
@@ -88,21 +100,37 @@ Start only after Phase 1 is green.
    transport kind, compatible launcher/game build, bounded endpoint candidates,
    and an expiry/nonce. Store no account name, refresh token, path, mod list, or
    save data.
-3. Build an in-game friend picker from the SteamKit friend cache. Keep Steam IDs
-   in memory, rate-limit invitations, and send only after explicit selection.
-4. Use `SteamMatchmaking.InviteToLobby`. Handle the matching incoming
+3. Build an in-game friend picker from the SteamKit friend cache plus the
+   authoritative Player nickname/gameplay-info services. Search both persona
+   name and nickname, hide offline friends by default behind an explicit toggle,
+   and rank nickname first, then currently playing this App ID, recently played
+   this App ID, and other online friends. Show nickname as primary and persona as
+   secondary; call `played_recently` only “recently played,” never “played
+   together.” Keep Steam IDs and friend metadata in memory, rate-limit
+   invitations, and send only after explicit selection.
+4. While a join surface owns a live listener, show the authenticated account's
+   sanitized Steam persona in a small input-transparent status chip. Never show
+   the login name or numeric Steam ID, never log or persist the persona, and
+   remove the chip on account/session/surface teardown or background expiry.
+5. Use `SteamMatchmaking.InviteToLobby`. Handle the matching incoming
    `ChatInviteCallback`, fetch and validate lobby metadata, show inviter and
    endpoint confirmation, then route acceptance through the same ENet join
    function as Phase 1.
-5. Leave/delete the bridge lobby and release the connection lease on disconnect,
+6. Leave/delete the bridge lobby and release the connection lease on disconnect,
    screen teardown, logout, app background timeout, or failed host startup.
-6. Label compatibility honestly: `Launcher direct invite`, not Steam relay, until
+7. Label compatibility honestly: `Launcher direct invite`, not Steam relay, until
    unmodified desktop interoperability is proven.
 
 Acceptance for Phase 2 requires two designated Steam test accounts:
 
 - Friend A can create a bridge lobby and invite friend B without exposing either
   credential or logging raw Steam IDs.
+- The picker searches persona and nickname, hides offline friends by default,
+  and applies the nickname → playing → recently played → online order without
+  persisting friend metadata or claiming co-play history.
+- Friend B's join page exposes only its sanitized authenticated persona while
+  listening, so Friend A can uniquely identify the controlled recipient without
+  guessing from a login name or list position.
 - Friend B receives exactly one bounded prompt, can decline without state change,
   and can accept into the matching ENet host on a reachable network.
 - Wrong App ID, unknown schema, expired nonce, malformed endpoint, duplicate
@@ -113,12 +141,15 @@ Acceptance for Phase 2 requires two designated Steam test accounts:
 
 ## Phase 3 — original Steamworks invite/relay feasibility gate
 
-1. Add a diagnostic-only probe that records the sanitized `SteamAPI.InitEx`
-   result and availability of Steam overlay, matchmaking, and networking sockets.
-   Do not force `SteamInitializer.Initialized` or call an interface after init
-   failure.
-2. Run it on an ordinary Android phone. If a Steam Frame/Lepton target becomes
-   available, run the same signed build there and compare.
+1. Reject the bundled stub before any probe. A diagnostic-only probe is valid
+   only when linked to a verified Valve Android ARM64 runtime; it then records
+   the sanitized `SteamAPI_InitFlat`/equivalent result and availability of Steam
+   overlay, matchmaking, and networking sockets. Do not force
+   `SteamInitializer.Initialized` or call an interface after init failure.
+2. The ordinary-phone experiment is currently blocked before init by the absent
+   real runtime and supported client environment. If a Steam Frame/Lepton target
+   and its matched Valve SDK library become available, run the same signed build
+   there and compare.
 3. If native initialization succeeds, prefer the game's existing
    `StartSteamHost`, `NInvitePlayersButton`, `SteamJoinCallbackHandler`, and
    SteamNetworkingSockets path with only compatibility/lifecycle patches.
@@ -128,6 +159,12 @@ Acceptance for Phase 2 requires two designated Steam test accounts:
 5. Treat a custom internet relay, Valve partner configuration change, or
    Steam-client emulation as a separate architecture/security decision requiring
    explicit authority and operational ownership.
+
+Current Phase 3 result: **fail closed at the runtime boundary**. The minimum
+external prerequisites are a verified Valve Android ARM64 `libsteam_api.so`, a
+supported Steam Frame/Lepton client environment, and the matching partner/App ID
+configuration. The shipped stub, the ordinary Steam mobile app, or fixed dummy
+handles cannot satisfy this gate.
 
 ## Upstream-conflict strategy
 

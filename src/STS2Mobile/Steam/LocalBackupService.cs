@@ -619,7 +619,10 @@ public static class LocalBackupService
                     var relative = file.Substring(setRoot.Length)
                         .TrimStart('/', '\\')
                         .Replace('\\', '/');
-                    WriteViaGodotFileAccess("user://" + relative, file);
+                    WriteViaGodotFileAccess(
+                        AccountDataIsolation.RewriteLocalGodotPath("user://" + relative),
+                        file
+                    );
                     count++;
                     bytes += new FileInfo(file).Length;
                 }
@@ -649,7 +652,8 @@ public static class LocalBackupService
                     FileCount = count,
                     TotalBytes = bytes,
                     PreRestoreBackupPath = preRestore.DestPath,
-                    Error = $"{failCount}/{total}개 파일 복원 실패. 복원 직전 백업: {preRestore.DestPath}",
+                    Error =
+                        $"{failCount}/{total}개 파일 복원 실패. 복원 직전 백업: {preRestore.DestPath}",
                 };
             }
 

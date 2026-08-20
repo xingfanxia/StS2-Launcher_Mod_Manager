@@ -7,10 +7,12 @@ namespace STS2Mobile.Launcher.Sections;
 public class LoginSection : VBoxContainer
 {
     public event Action<string, string> LoginRequested;
+    public event Action AccountSwitchCancelled;
 
     public LineEdit UsernameField { get; }
     private readonly LineEdit _passwordField;
     private readonly Button _loginButton;
+    private readonly Button _cancelSwitchButton;
 
     public LoginSection(float scale)
     {
@@ -31,6 +33,11 @@ public class LoginSection : VBoxContainer
         _loginButton = new StyledButton("LOGIN", scale);
         _loginButton.Pressed += OnLoginPressed;
         AddChild(_loginButton);
+
+        _cancelSwitchButton = new StyledButton("계정 전환 취소", scale);
+        _cancelSwitchButton.Visible = false;
+        _cancelSwitchButton.Pressed += () => AccountSwitchCancelled?.Invoke();
+        AddChild(_cancelSwitchButton);
     }
 
     public void SetDisabled(bool disabled)
@@ -41,6 +48,14 @@ public class LoginSection : VBoxContainer
     public void ClearPassword()
     {
         _passwordField.Text = "";
+    }
+
+    public void SetAccountSwitchMode(bool enabled)
+    {
+        UsernameField.Text = "";
+        _passwordField.Text = "";
+        _cancelSwitchButton.Visible = enabled;
+        AndroidLoginAutofillBridge.Clear();
     }
 
     private void OnLoginPressed()

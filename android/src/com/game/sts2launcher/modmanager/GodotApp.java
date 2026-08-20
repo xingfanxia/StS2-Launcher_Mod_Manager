@@ -7,6 +7,9 @@ import org.godotengine.godot.input.GodotEditText;
 import android.app.ActivityManager;
 import android.app.AlertDialog;
 import android.app.ApplicationExitInfo;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Build;
@@ -57,7 +60,6 @@ import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
 
-import android.content.Context;
 import android.net.wifi.WifiManager;
 import android.util.Base64;
 
@@ -111,6 +113,7 @@ public class GodotApp extends GodotActivity {
 	private volatile boolean debugModSafeMode;
 	private volatile String debugModPartition = "";
 	private volatile boolean debugDeckCacheMutationProbe;
+	private volatile boolean debugLanInviteChooser;
 	private volatile int debugStartupStageDelaySeconds;
 	private volatile boolean startupTelemetryPersistenceEnabled = true;
 	private volatile String lastLoggedStartupStage = "";
@@ -127,6 +130,7 @@ public class GodotApp extends GodotActivity {
 	private boolean recordsNativeStartupPerformance;
 
 	private volatile boolean pickerActive = false;
+	private AlertDialog lanInviteDialog;
 	private final List<File> stagedAtlasCacheDirs = new ArrayList<>();
 	private final java.util.List<String> lastPickedZipPaths =
 			java.util.Collections.synchronizedList(new java.util.ArrayList<>());
@@ -275,6 +279,14 @@ public class GodotApp extends GodotActivity {
 		} finally {
 			overlayHandoffReady = true;
 		}
+		if (debugLanInviteChooser) {
+			debugLanInviteChooser = false;
+			getWindow().getDecorView().postDelayed(
+					() -> showLanInviteChooser(
+							"sts2lan:v1:192.168.50.10:33771\n"
+									+ "sts2lan:v1:100.64.0.10:33771"),
+					1_500L);
+		}
 
 		// Android WiFi power saving drops broadcast packets without a MulticastLock.
 		try {
@@ -331,6 +343,98 @@ public class GodotApp extends GodotActivity {
 				Toast.LENGTH_LONG).show());
 	}
 
+	public void showLanInviteMessage(String message) {
+		String safe = sanitizeBoundedDisplayText(message, 240);
+		if (safe.isEmpty()) return;
+		runOnUiThread(() -> Toast.makeText(this, safe, Toast.LENGTH_LONG).show());
+	}
+
+	public void showLanInviteChooser(String inviteCodes) {
+		final List<String> codes = LanInviteShareContract.parseCodes(inviteCodes);
+		if (codes.isEmpty()) {
+			runOnUiThread(() -> Toast.makeText(
+					this,
+					nativeText(
+							"공유할 수 있는 직접 연결 주소가 없습니다.",
+							"No direct-connect address is available to share.",
+							"没有可分享的直连地址。"),
+					Toast.LENGTH_LONG).show());
+			return;
+		}
+
+		runOnUiThread(() -> {
+			if (isFinishing() || isDestroyed()) return;
+			dismissLanInviteDialogOnUiThread();
+			String[] labels = new String[codes.size()];
+			for (int i = 0; i < codes.size(); i++) {
+				labels[i] = codes.get(i).substring(LanInviteShareContract.V1_PREFIX.length());
+			}
+			final int[] selected = {0};
+			AlertDialog inviteDialog = new AlertDialog.Builder(this)
+					.setTitle(nativeText(
+							"LAN/VPN 직접 초대 공유",
+							"Share LAN/VPN direct invite",
+							"分享 LAN/VPN 直连邀请"))
+					.setSingleChoiceItems(labels, 0, (dialog, which) -> selected[0] = which)
+					.setPositiveButton(
+							nativeText("공유", "SHARE", "分享"),
+							(dialog, which) -> shareLanInvite(codes.get(selected[0])))
+					.setNeutralButton(
+							nativeText("복사", "COPY", "复制"),
+							(dialog, which) -> copyLanInvite(codes.get(selected[0])))
+					.setNegativeButton(nativeText("취소", "CANCEL", "取消"), null)
+					.create();
+			inviteDialog.setOnDismissListener(ignored -> {
+				if (lanInviteDialog == inviteDialog) lanInviteDialog = null;
+			});
+			lanInviteDialog = inviteDialog;
+			inviteDialog.show();
+		});
+	}
+
+	public void dismissLanInviteChooser() {
+		runOnUiThread(this::dismissLanInviteDialogOnUiThread);
+	}
+
+	private void dismissLanInviteDialogOnUiThread() {
+		AlertDialog dialog = lanInviteDialog;
+		lanInviteDialog = null;
+		if (dialog != null && dialog.isShowing()) dialog.dismiss();
+	}
+
+	private void shareLanInvite(String code) {
+		Intent share = new Intent(Intent.ACTION_SEND);
+		share.setType("text/plain");
+		share.putExtra(Intent.EXTRA_TEXT, code);
+		Intent chooser = Intent.createChooser(
+				share,
+				nativeText("직접 초대 공유", "Share direct invite", "分享直连邀请"));
+		startActivity(chooser);
+	}
+
+	private void copyLanInvite(String code) {
+		ClipboardManager clipboard =
+				(ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+		if (clipboard == null) return;
+		clipboard.setPrimaryClip(ClipData.newPlainText("StS2 LAN invite", code));
+		Toast.makeText(
+				this,
+				nativeText(
+						"직접 초대 코드를 복사했습니다.",
+						"Direct invite code copied.",
+						"已复制直连邀请代码。"),
+				Toast.LENGTH_SHORT).show();
+	}
+
+	private static String sanitizeBoundedDisplayText(String value, int maxLength) {
+		if (value == null) return "";
+		String safe = value.trim()
+				.replace('\r', ' ')
+				.replace('\n', ' ')
+				.replace('\t', ' ');
+		return safe.length() <= maxLength ? safe : safe.substring(0, maxLength);
+	}
+
 	// Reads `--es debug_force_*` intent extras from `adb shell am start` and
 	// drops marker files into getFilesDir(). The C# side polls these on its
 	// first-UI hook and routes them to the matching dialog handler. Used by
@@ -367,6 +471,12 @@ public class GodotApp extends GodotActivity {
 					w.write(body);
 				}
 				Log.i(TAG, "[Debug] Update-dialog marker written: version=" + version);
+			}
+			debugLanInviteChooser =
+					"1".equals(intent.getStringExtra("debug_force_lan_invite_chooser"));
+			intent.removeExtra("debug_force_lan_invite_chooser");
+			if (debugLanInviteChooser) {
+				Log.i(TAG, "[LAN invite/Debug] fixed chooser probe armed");
 			}
 			// Issue #23: diagnostic markers. The atlas_wipe intent reuses the
 			// production .atlas_wipe_pending marker so the same overlay/flow runs
@@ -1443,6 +1553,7 @@ public class GodotApp extends GodotActivity {
 		// or native QueuePresentKHR failure from this lifecycle path must never be
 		// counted as a failed foreground launch or renderer crash loop.
 		markStartupForeground(false);
+		dismissLanInviteDialogOnUiThread();
 		super.onPause();
 	}
 
@@ -1570,6 +1681,7 @@ public class GodotApp extends GodotActivity {
 
 	@Override
 	protected void onDestroy() {
+		dismissLanInviteDialogOnUiThread();
 		if (multicastLock != null && multicastLock.isHeld()) {
 			multicastLock.release();
 			Log.i(TAG, "WiFi MulticastLock released");
@@ -2245,6 +2357,13 @@ public class GodotApp extends GodotActivity {
 		return keyGen.generateKey();
 	}
 
+	private SecretKey getExistingKeystoreKey() throws Exception {
+		KeyStore keyStore = KeyStore.getInstance("AndroidKeyStore");
+		keyStore.load(null);
+		if (!keyStore.containsAlias(KEYSTORE_ALIAS)) return null;
+		return ((KeyStore.SecretKeyEntry) keyStore.getEntry(KEYSTORE_ALIAS, null)).getSecretKey();
+	}
+
 	public String encryptString(String plaintext) {
 		try {
 			SecretKey key = getOrCreateKeystoreKey();
@@ -2274,7 +2393,9 @@ public class GodotApp extends GodotActivity {
 			byte[] ciphertext = new byte[blob.length - 1 - ivLength];
 			System.arraycopy(blob, 1 + ivLength, ciphertext, 0, ciphertext.length);
 
-			SecretKey key = getOrCreateKeystoreKey();
+			SecretKey key = getExistingKeystoreKey();
+			if (key == null) throw new java.security.GeneralSecurityException(
+					"Credential encryption key is unavailable");
 			Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
 			cipher.init(Cipher.DECRYPT_MODE, key, new GCMParameterSpec(128, iv));
 			byte[] plaintext = cipher.doFinal(ciphertext);
@@ -2591,13 +2712,4 @@ public class GodotApp extends GodotActivity {
 		Log.i(TAG, "[Debug] Logcat capture stopped");
 	}
 
-	public void deleteKeystoreKey() {
-		try {
-			KeyStore keyStore = KeyStore.getInstance("AndroidKeyStore");
-			keyStore.load(null);
-			keyStore.deleteEntry(KEYSTORE_ALIAS);
-		} catch (Exception e) {
-			Log.e(TAG, "Failed to delete keystore key", e);
-		}
-	}
 }

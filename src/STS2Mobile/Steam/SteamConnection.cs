@@ -1,12 +1,73 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.Globalization;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using SteamKit2;
 using SteamKit2.Internal;
+using STS2Mobile.Multiplayer;
 
 namespace STS2Mobile.Steam;
+
+internal sealed class SteamInviteFriend
+{
+    public ulong SteamId { get; }
+    public string PersonaName { get; }
+    public string Nickname { get; }
+    public bool IsOnline { get; }
+    public bool IsPlayingGame { get; }
+    public bool PlayedRecently { get; }
+
+    public bool HasNickname => SteamInviteFriendListPolicy.HasNickname(Nickname);
+    public string DisplayName => SteamInviteFriendListPolicy.PrimaryName(PersonaName, Nickname);
+
+    public SteamInviteFriend(
+        ulong steamId,
+        string personaName,
+        string nickname,
+        bool isOnline,
+        bool isPlayingGame,
+        bool playedRecently
+    )
+    {
+        SteamId = steamId;
+        PersonaName = personaName;
+        Nickname = nickname;
+        IsOnline = isOnline;
+        IsPlayingGame = isPlayingGame;
+        PlayedRecently = playedRecently;
+    }
+
+    public override string ToString() => nameof(SteamInviteFriend);
+}
+
+internal readonly struct SteamChatLobbyInviteSignal
+{
+    public ulong InvitedSteamId { get; }
+    public ulong LobbySteamId { get; }
+    public ulong PatronSteamId { get; }
+    public uint AppId { get; }
+    public bool IsLobby { get; }
+
+    public SteamChatLobbyInviteSignal(
+        ulong invitedSteamId,
+        ulong lobbySteamId,
+        ulong patronSteamId,
+        uint appId,
+        bool isLobby
+    )
+    {
+        InvitedSteamId = invitedSteamId;
+        LobbySteamId = lobbySteamId;
+        PatronSteamId = patronSteamId;
+        AppId = appId;
+        IsLobby = isLobby;
+    }
+
+    public override string ToString() => nameof(SteamChatLobbyInviteSignal);
+}
 
 public enum ConnectionState
 {
@@ -61,6 +122,8 @@ public class SteamConnection : IDisposable
     private readonly SteamUser _steamUser;
     private readonly SteamApps _steamApps;
     private readonly SteamContent _steamContent;
+    private readonly SteamFriends _steamFriends;
+    private readonly SteamMatchmaking _steamMatchmaking;
     private readonly SteamUnifiedMessages _unifiedMessages;
 
     private Thread _callbackThread;
@@ -69,16 +132,22 @@ public class SteamConnection : IDisposable
     private readonly object _stateLock = new();
     private readonly SemaphoreSlim _sendLock = new(1, 1);
     private readonly ManualResetEventSlim _connectedGate = new(false);
+    private readonly ManualResetEventSlim _friendsReadyGate = new(false);
+    private readonly ManualResetEventSlim _personaReadyGate = new(false);
     private Timer _idleTimer;
     private int _backoffMs;
     private Exception _connectError;
     private volatile int _idleSuspendCount;
+    private int _disposed;
 
     public ConnectionState State { get; private set; } = ConnectionState.Idle;
     public ulong AppAccessToken { get; set; }
 
     public SteamClient Client => _client;
     public SteamConfiguration Configuration => _client.Configuration;
+    public ulong AuthenticatedSteamId => _client.SteamID?.ConvertToUInt64() ?? 0;
+
+    internal event Action<SteamChatLobbyInviteSignal> ChatLobbyInviteReceived;
 
     public SteamApps Apps
     {
@@ -98,6 +167,15 @@ public class SteamConnection : IDisposable
         }
     }
 
+    internal SteamMatchmaking Matchmaking
+    {
+        get
+        {
+            EnsureConnected();
+            return _steamMatchmaking;
+        }
+    }
+
     public SteamConnection(string accountName, string refreshToken, int idleTimeoutMs = 30_000)
     {
         _accountName = accountName;
@@ -110,6 +188,8 @@ public class SteamConnection : IDisposable
         _steamUser = _client.GetHandler<SteamUser>();
         _steamApps = _client.GetHandler<SteamApps>();
         _steamContent = _client.GetHandler<SteamContent>();
+        _steamFriends = _client.GetHandler<SteamFriends>();
+        _steamMatchmaking = _client.GetHandler<SteamMatchmaking>();
         _unifiedMessages = _client.GetHandler<SteamUnifiedMessages>();
         _unifiedMessages.CreateService<Cloud>();
         _unifiedMessages.CreateService<PublishedFile>();
@@ -159,6 +239,278 @@ public class SteamConnection : IDisposable
                 : new InvalidOperationException($"Login failed: {cb.Result}");
             _connectedGate.Set();
         });
+
+        _callbackManager.Subscribe<SteamFriends.ChatInviteCallback>(cb =>
+        {
+            try
+            {
+                ChatLobbyInviteReceived?.Invoke(
+                    new SteamChatLobbyInviteSignal(
+                        cb.InvitedID?.ConvertToUInt64() ?? 0,
+                        cb.ChatRoomID?.ConvertToUInt64() ?? 0,
+                        cb.PatronID?.ConvertToUInt64() ?? 0,
+                        cb.GameID?.AppID ?? 0,
+                        cb.ChatRoomType == EChatRoomType.Lobby
+                    )
+                );
+            }
+            catch (Exception ex)
+            {
+                PatchHelper.Log($"[SteamInvite] Incoming callback degraded: {ex.GetType().Name}");
+            }
+        });
+
+        _callbackManager.Subscribe<SteamFriends.FriendsListCallback>(cb =>
+        {
+            if (!cb.Incremental)
+                _friendsReadyGate.Set();
+        });
+        _callbackManager.Subscribe<SteamFriends.PersonaStateCallback>(cb =>
+        {
+            if (!string.IsNullOrWhiteSpace(cb.Name))
+                _personaReadyGate.Set();
+        });
+    }
+
+    internal async Task<IReadOnlyList<SteamInviteFriend>> GetInviteFriendsAsync(
+        CancellationToken cancellationToken
+    )
+    {
+        EnsureConnected();
+        // A valid empty friend list is distinct from a list that Steam has not
+        // delivered yet. Wait on the actual SteamKit callback rather than
+        // guessing with fixed delays; timeout remains a bounded fail-closed
+        // network condition, not evidence that the account has no friends.
+        if (!_friendsReadyGate.Wait(TimeSpan.FromSeconds(5), cancellationToken))
+            throw new TimeoutException("Steam friend list was not ready.");
+        int count = Math.Clamp(
+            _steamFriends.GetFriendCount(),
+            0,
+            SteamInviteFriendListPolicy.MaxSearchableFriends
+        );
+        var friendIds = new List<SteamID>(count);
+        for (int index = 0; index < count; index++)
+        {
+            var steamId = _steamFriends.GetFriendByIndex(index);
+            if (
+                steamId == null
+                || steamId.ConvertToUInt64() == 0
+                || _steamFriends.GetFriendRelationship(steamId) != EFriendRelationship.Friend
+            )
+                continue;
+            friendIds.Add(steamId);
+        }
+
+        // The full relationship list can arrive before all persona/presence
+        // fields. Request the fields needed by this picker, then wait on the
+        // corresponding callback condition. Empty or duplicate identities are
+        // omitted rather than exposing raw Steam IDs or creating ambiguous
+        // recipient buttons.
+        const EClientPersonaStateFlag invitePersonaFields =
+            EClientPersonaStateFlag.PlayerName
+            | EClientPersonaStateFlag.Presence
+            | EClientPersonaStateFlag.GameDataBlob;
+        _personaReadyGate.Reset();
+        _steamFriends.RequestFriendInfo(friendIds, invitePersonaFields);
+        var waitBudget = TimeSpan.FromSeconds(5);
+        var waited = Stopwatch.StartNew();
+        while (true)
+        {
+            var missing = friendIds
+                .Where(id =>
+                    string.IsNullOrEmpty(
+                        SanitizePersonaName(_steamFriends.GetFriendPersonaName(id))
+                    )
+                )
+                .ToList();
+            if (missing.Count == 0)
+                break;
+            var remaining = waitBudget - waited.Elapsed;
+            if (remaining <= TimeSpan.Zero)
+                break;
+            _personaReadyGate.Reset();
+            _steamFriends.RequestFriendInfo(missing, invitePersonaFields);
+            if (!_personaReadyGate.Wait(remaining, cancellationToken))
+                break;
+        }
+
+        var nicknames = await GetFriendNicknamesAsync(cancellationToken).ConfigureAwait(false);
+        var gameplay = await GetFriendsGameplayInfoAsync(cancellationToken).ConfigureAwait(false);
+        var candidates = friendIds
+            .Select(id => new SteamInviteFriend(
+                id.ConvertToUInt64(),
+                SanitizePersonaName(_steamFriends.GetFriendPersonaName(id)),
+                nicknames.GetValueOrDefault(id.AccountID, string.Empty),
+                _steamFriends.GetFriendPersonaState(id) != EPersonaState.Offline,
+                gameplay.InGame.Contains(id.ConvertToUInt64()),
+                gameplay.PlayedRecently.Contains(id.ConvertToUInt64())
+            ))
+            .Where(friend => !string.IsNullOrEmpty(friend.PersonaName))
+            .ToList();
+        return candidates
+            .GroupBy(
+                friend =>
+                    SteamInviteFriendListPolicy.IdentityKey(friend.PersonaName, friend.Nickname),
+                StringComparer.OrdinalIgnoreCase
+            )
+            .Where(group => group.Count() == 1)
+            .Select(group => group.Single())
+            .OrderByDescending(friend =>
+                SteamInviteFriendListPolicy.Rank(
+                    friend.HasNickname,
+                    friend.IsPlayingGame,
+                    friend.PlayedRecently,
+                    friend.IsOnline
+                )
+            )
+            .ThenBy(friend => friend.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .Take(SteamInviteFriendListPolicy.MaxSearchableFriends)
+            .ToList();
+    }
+
+    private async Task<Dictionary<uint, string>> GetFriendNicknamesAsync(
+        CancellationToken cancellationToken
+    )
+    {
+        try
+        {
+            var response = await SendService<
+                CPlayer_GetNicknameList_Request,
+                CPlayer_GetNicknameList_Response
+            >("Player.GetNicknameList", new CPlayer_GetNicknameList_Request())
+                .WaitAsync(TimeSpan.FromSeconds(8), cancellationToken)
+                .ConfigureAwait(false);
+            return response
+                .nicknames.Select(entry => new
+                {
+                    entry.accountid,
+                    Nickname = SanitizePersonaName(entry.nickname),
+                })
+                .Where(entry => entry.accountid != 0 && entry.Nickname.Length != 0)
+                .GroupBy(entry => entry.accountid)
+                .ToDictionary(group => group.Key, group => group.First().Nickname);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            // Nicknames are optional enrichment. The picker remains usable with
+            // sanitized Steam persona names if this account/service lacks them.
+            return new Dictionary<uint, string>();
+        }
+    }
+
+    private async Task<(
+        HashSet<ulong> InGame,
+        HashSet<ulong> PlayedRecently
+    )> GetFriendsGameplayInfoAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var response = await SendService<
+                CPlayer_GetFriendsGameplayInfo_Request,
+                CPlayer_GetFriendsGameplayInfo_Response
+            >(
+                    "Player.GetFriendsGameplayInfo",
+                    new CPlayer_GetFriendsGameplayInfo_Request { appid = WorkshopAppId }
+                )
+                .WaitAsync(TimeSpan.FromSeconds(8), cancellationToken)
+                .ConfigureAwait(false);
+            return (
+                response.in_game.Select(entry => entry.steamid).ToHashSet(),
+                response.played_recently.Select(entry => entry.steamid).ToHashSet()
+            );
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            // Gameplay categories are optional rank hints, never an invite
+            // authorization input. Fail closed to the ordinary online order.
+            return (new HashSet<ulong>(), new HashSet<ulong>());
+        }
+    }
+
+    internal SteamLobbyInviteSenderTrust ClassifyInviteSender(ulong steamId)
+    {
+        if (steamId == 0)
+            return SteamLobbyInviteSenderTrust.Unknown;
+        EnsureConnected();
+        var relationship = _steamFriends.GetFriendRelationship(new SteamID(steamId));
+        if (relationship == EFriendRelationship.Friend)
+            return SteamLobbyInviteSenderTrust.Friend;
+        var text = relationship.ToString();
+        return
+            text.Contains("Block", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("Ignore", StringComparison.OrdinalIgnoreCase)
+            ? SteamLobbyInviteSenderTrust.Blocked
+            : SteamLobbyInviteSenderTrust.NonFriend;
+    }
+
+    internal void SetInvitePresenceOnline()
+    {
+        EnsureConnected();
+        _steamFriends.SetPersonaState(EPersonaState.Online);
+    }
+
+    internal string GetAuthenticatedPersonaName(CancellationToken cancellationToken)
+    {
+        EnsureConnected();
+        var authenticatedId = _client.SteamID;
+        if (authenticatedId == null || authenticatedId.ConvertToUInt64() == 0)
+            return string.Empty;
+
+        // Steam can report LoggedOn before its own persona cache has arrived.
+        // Request the exact field and wait on the real persona callback instead
+        // of guessing with a fixed sleep. The returned value is sanitized for
+        // necessary UI only; callers must not log or persist it.
+        var personaName = SanitizePersonaName(_steamFriends.GetPersonaName());
+        var waitBudget = TimeSpan.FromSeconds(5);
+        var waited = Stopwatch.StartNew();
+        while (personaName.Length == 0)
+        {
+            var remaining = waitBudget - waited.Elapsed;
+            if (remaining <= TimeSpan.Zero)
+                break;
+            _personaReadyGate.Reset();
+            _steamFriends.RequestFriendInfo(
+                new[] { authenticatedId },
+                EClientPersonaStateFlag.PlayerName
+            );
+            personaName = SanitizePersonaName(_steamFriends.GetPersonaName());
+            if (personaName.Length != 0)
+                break;
+            if (!_personaReadyGate.Wait(remaining, cancellationToken))
+                break;
+            personaName = SanitizePersonaName(_steamFriends.GetPersonaName());
+        }
+        return personaName;
+    }
+
+    internal string GetInviteFriendDisplayName(ulong steamId)
+    {
+        if (steamId == 0)
+            return string.Empty;
+        EnsureConnected();
+        return SanitizePersonaName(_steamFriends.GetFriendPersonaName(new SteamID(steamId)));
+    }
+
+    private static string SanitizePersonaName(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+        var characters = value
+            .Where(character =>
+                !char.IsControl(character)
+                && char.GetUnicodeCategory(character) != UnicodeCategory.Format
+            )
+            .Take(64)
+            .ToArray();
+        return new string(characters).Trim();
     }
 
     // issue #59 — narrow, conservative classification of "this EResult means
@@ -219,7 +571,9 @@ public class SteamConnection : IDisposable
                 return null;
             }
 
-            PatchHelper.Log("[Issue59] TryRenewRefreshTokenAsync: server issued a new refresh token");
+            PatchHelper.Log(
+                "[Issue59] TryRenewRefreshTokenAsync: server issued a new refresh token"
+            );
             return result.RefreshToken;
         }
         catch (Exception ex)
@@ -529,6 +883,7 @@ public class SteamConnection : IDisposable
 
     public void SuspendIdleTimeout()
     {
+        ThrowIfDisposed();
         Interlocked.Increment(ref _idleSuspendCount);
         _idleTimer?.Dispose();
         _idleTimer = null;
@@ -536,6 +891,8 @@ public class SteamConnection : IDisposable
 
     public void ResumeIdleTimeout()
     {
+        if (Volatile.Read(ref _disposed) != 0)
+            return;
         if (Interlocked.Decrement(ref _idleSuspendCount) <= 0)
         {
             _idleSuspendCount = 0;
@@ -575,13 +932,28 @@ public class SteamConnection : IDisposable
 
     public void Dispose()
     {
-        Flush();
-        _sendLock.Dispose();
-        _connectedGate.Dispose();
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            return;
+
+        // Wake a concurrent EnsureConnected before taking _stateLock. This
+        // prevents teardown from waiting for the full connect timeout and,
+        // crucially, avoids disposing synchronization primitives while another
+        // thread is using them. They become collectible with this connection.
+        _connectedGate.Set();
+        _friendsReadyGate.Set();
+        _personaReadyGate.Set();
+        lock (_stateLock)
+        {
+            _idleTimer?.Dispose();
+            _idleTimer = null;
+            Teardown();
+            TransitionTo(ConnectionState.Idle);
+        }
     }
 
     private void EnsureConnected()
     {
+        ThrowIfDisposed();
         if (State == ConnectionState.Connected)
         {
             ResetIdleTimer();
@@ -590,6 +962,7 @@ public class SteamConnection : IDisposable
 
         lock (_stateLock)
         {
+            ThrowIfDisposed();
             if (State == ConnectionState.Connected)
             {
                 ResetIdleTimer();
@@ -602,10 +975,13 @@ public class SteamConnection : IDisposable
                 Monitor.Exit(_stateLock);
                 Thread.Sleep(_backoffMs);
                 Monitor.Enter(_stateLock);
+                ThrowIfDisposed();
             }
 
             _connectError = null;
             _connectedGate.Reset();
+            _friendsReadyGate.Reset();
+            _personaReadyGate.Reset();
             TransitionTo(ConnectionState.Connecting);
 
             try
@@ -627,6 +1003,8 @@ public class SteamConnection : IDisposable
                 EnterBackoff();
                 throw new TimeoutException("Steam connection timed out");
             }
+
+            ThrowIfDisposed();
 
             if (_connectError != null)
             {
@@ -650,7 +1028,7 @@ public class SteamConnection : IDisposable
         _callbackRunning = true;
         _callbackThread = new Thread(() =>
         {
-            while (_callbackRunning)
+            while (_callbackRunning && Volatile.Read(ref _disposed) == 0)
                 _callbackManager.RunWaitCallbacks(TimeSpan.FromSeconds(1));
         })
         {
@@ -685,7 +1063,7 @@ public class SteamConnection : IDisposable
 
     private void ResetIdleTimer()
     {
-        if (_idleSuspendCount > 0)
+        if (_idleSuspendCount > 0 || Volatile.Read(ref _disposed) != 0)
             return;
 
         _idleTimer?.Dispose();
@@ -708,5 +1086,11 @@ public class SteamConnection : IDisposable
     private void TransitionTo(ConnectionState newState)
     {
         State = newState;
+    }
+
+    private void ThrowIfDisposed()
+    {
+        if (Volatile.Read(ref _disposed) != 0)
+            throw new ObjectDisposedException(nameof(SteamConnection));
     }
 }

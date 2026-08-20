@@ -34,6 +34,26 @@ internal static class EnglishLocalization
         ["한국어로 전환했습니다."] = "Switched to Korean.",
         ["영어로 전환하려면 누르세요."] = "Tap to switch to English.",
         ["한국어"] = "Korean",
+        ["Steam 계정 전환"] = "SWITCH STEAM ACCOUNT",
+        ["계정 전환 취소"] = "CANCEL ACCOUNT SWITCH",
+        ["계정마다 세이브와 런처 설정을 따로 보관합니다. 게임 파일과 모드는 공유됩니다."] =
+            "Each account keeps separate saves and launcher preferences. Game files and mods stay shared.",
+        ["다른 계정 추가"] = "ADD ANOTHER ACCOUNT",
+        ["현재"] = "CURRENT",
+        [
+            "Steam 계정을 전환할까요?\n\n대기 중인 클라우드 쓰기를 먼저 마친 뒤 앱을 재시작합니다. 게임, 세이브, Workshop/mod, 로컬 백업 및 클라우드 데이터는 삭제하지 않습니다."
+        ] =
+            "Switch Steam account now?\n\nPending cloud writes will finish first, then the app will restart. Game files, saves, Workshop/mod files, local backups, and cloud data will not be deleted.",
+        ["전환"] = "SWITCH",
+        ["계정 전환 전 클라우드 쓰기를 마무리하는 중..."] =
+            "Finishing cloud writes before switching account...",
+        ["계정 전환을 완료하지 못했습니다. 현재 계정은 변경되지 않았습니다."] =
+            "Account switch was not completed. The current account is unchanged.",
+        ["계정 추가 전 클라우드 쓰기를 마무리하는 중..."] =
+            "Finishing cloud writes before adding an account...",
+        ["계정 전환을 시작하지 못했습니다. 현재 계정은 변경되지 않았습니다."] =
+            "Could not start account switching. The current account is unchanged.",
+        ["다른 Steam 계정을 추가하려면 로그인하세요"] = "Sign in to add another Steam account",
 
         ["프로필별로 로컬과 Steam Cloud의 진행도를 확인하고 개별적으로 동기화할 수 있습니다."] =
             "Review local and Steam Cloud progress for each profile and sync them individually.",

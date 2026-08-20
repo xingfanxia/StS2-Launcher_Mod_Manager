@@ -102,6 +102,7 @@ public static class PatchHelper
 
     public static void Log(string msg)
     {
+        msg = SensitiveLogRedactor.Redact(msg);
         Console.Error.WriteLine($"[STS2Mobile] {msg}");
         LogEmitted?.Invoke(msg);
     }

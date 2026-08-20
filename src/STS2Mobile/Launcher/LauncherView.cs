@@ -274,8 +274,7 @@ public class LauncherView
         string msg,
         Godot.Color color,
         TextProvenance provenance = TextProvenance.LauncherAuthored
-    ) =>
-        Log.AppendColoredLog(msg, color, provenance);
+    ) => Log.AppendColoredLog(msg, color, provenance);
 
     public void HideAllSections()
     {
@@ -489,6 +488,21 @@ public class LauncherView
             dialog.Cancelled += onCancelled;
         if (onAtlasWipeRequested != null)
             dialog.AtlasWipeRequested += onAtlasWipeRequested;
+        _parent.AddChild(dialog);
+    }
+
+    public void ShowSteamAccountPicker(
+        IReadOnlyList<SteamAccountSummary> accounts,
+        Action<ulong> onSelected,
+        Action onAddAccount,
+        Action onCancelled = null
+    )
+    {
+        var dialog = new SteamAccountPickerDialog(accounts, _scale);
+        dialog.AccountSelected += onSelected;
+        dialog.AddAccountRequested += onAddAccount;
+        if (onCancelled != null)
+            dialog.Cancelled += onCancelled;
         _parent.AddChild(dialog);
     }
 

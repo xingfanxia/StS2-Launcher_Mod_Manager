@@ -36,6 +36,14 @@ public static class LauncherPatches
     // duplicating the _cloudCacheReady field in a different class.
     internal static void DegradeToLocalOnlySession() => _cloudCacheReady = false;
 
+    internal static void ResetAccountSession()
+    {
+        SavedAccountName = null;
+        SavedRefreshToken = null;
+        _cloudCacheReady = false;
+        CloudSyncEnabled = false;
+    }
+
     public static void Apply(Harmony harmony)
     {
         PatchHelper.PatchCritical(

@@ -28,8 +28,10 @@ public static class AppPaths
     //   manual/ — user-triggered snapshots (LocalBackupService.BackupNow). Never
     //             auto-evicted (FIFO-protected) so an intentional backup is durable.
     //   auto/   — pre-PLAY handshake snapshots. FIFO-capped (newest N sets kept).
-    public const string ExternalManualBackupsDir = ExternalSaveBackupsDir + "/manual";
-    public const string ExternalAutoBackupsDir = ExternalSaveBackupsDir + "/auto";
+    public static string ExternalManualBackupsDir =>
+        Steam.AccountDataIsolation.GetExternalBackupDirectory(ExternalSaveBackupsDir, "manual");
+    public static string ExternalAutoBackupsDir =>
+        Steam.AccountDataIsolation.GetExternalBackupDirectory(ExternalSaveBackupsDir, "auto");
 
     // User-editable configs that need to be reachable without root/ADB (issue #26).
     public const string ExternalConfigDir = ExternalRoot + "/Config";
@@ -134,6 +136,12 @@ public static class AppPaths
         try
         {
             Directory.CreateDirectory(ExternalSaveBackupsDir);
+            Steam.AccountDataIsolation.TryAdoptExternalBackups(
+                OS.GetDataDir(),
+                ExternalSaveBackupsDir
+            );
+            Directory.CreateDirectory(ExternalManualBackupsDir);
+            Directory.CreateDirectory(ExternalAutoBackupsDir);
         }
         catch { }
         try

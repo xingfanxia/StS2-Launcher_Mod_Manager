@@ -27,6 +27,8 @@ public class LauncherModel : IDisposable
     private TaskCompletionSource<string> _codeTcs;
     private SessionState _state = SessionState.Disconnected;
     private string _failReason;
+    private int _sessionGeneration;
+    private bool _accountSwitchPending;
 
     public volatile bool OfflineMode;
     public volatile bool ConnectionResolved;
@@ -56,6 +58,9 @@ public class LauncherModel : IDisposable
     public string AccountName => _credentialStore.AccountName;
     public string SavedAccountName => _credentialStore.AccountName;
     public string SavedRefreshToken => _credentialStore.RefreshToken;
+    public ulong ActiveSteamId => _credentialStore.SteamId;
+    public IReadOnlyList<SteamAccountSummary> StoredAccounts => _credentialStore.Accounts;
+    public bool AccountSwitchPending => _accountSwitchPending;
     public string FailReason => _failReason;
     public SessionState SessionState => _state;
 
@@ -108,6 +113,24 @@ public class LauncherModel : IDisposable
         ConnectionResolved = false;
         _credentialStore.Load();
 
+        if (_credentialStore.LoadFailed)
+        {
+            LauncherPatches.ResetAccountSession();
+            AccountDataIsolation.ClearActive();
+            return FastPathResult.AccountDataUnavailable;
+        }
+
+        if (_credentialStore.SteamId != 0)
+        {
+            if (!AccountDataIsolation.TryActivate(_dataDir, _credentialStore.DataSlot, out _))
+            {
+                LauncherPatches.ResetAccountSession();
+                AccountDataIsolation.ClearActive();
+                PatchHelper.Log("[AccountSwitch] Account data activation failed; launch blocked");
+                return FastPathResult.AccountDataUnavailable;
+            }
+        }
+
         if (_credentialStore.HasCredentials)
         {
             LauncherPatches.SavedAccountName = _credentialStore.AccountName;
@@ -141,7 +164,12 @@ public class LauncherModel : IDisposable
 
         // Even with a valid marker, refuse the fast path if the PCK isn't on
         // disk — otherwise PLAY would launch into a broken game.
-        if (_credentialStore.HasCredentials && hasMarker && GameFilesReady())
+        if (
+            _credentialStore.HasCredentials
+            && _credentialStore.SteamId != 0
+            && hasMarker
+            && GameFilesReady()
+        )
             return FastPathResult.ReadyToLaunch;
 
         if (_credentialStore.HasCredentials)
@@ -154,6 +182,7 @@ public class LauncherModel : IDisposable
     // credentials but no ownership marker.
     public async void Connect()
     {
+        var generation = _sessionGeneration;
         SetState(SessionState.Connecting);
 
         try
@@ -162,7 +191,18 @@ public class LauncherModel : IDisposable
                 _credentialStore.AccountName,
                 _credentialStore.RefreshToken
             );
-            await VerifyOwnershipAsync();
+            if (!await VerifyOwnershipAsync(_credentialStore.AccountName))
+                return;
+            if (
+                !FinalizeAuthenticatedIdentity(
+                    _credentialStore.AccountName,
+                    _credentialStore.RefreshToken,
+                    _credentialStore.GuardData,
+                    generation
+                )
+            )
+                return;
+            SetState(SessionState.LoggedIn);
             // issue #59 — the server accepted this token, so a local "expired"
             // verdict (clock skew, parse quirk) is overruled. ExpiringSoon is
             // NOT cleared here: it's still the same token with the same exp.
@@ -183,12 +223,14 @@ public class LauncherModel : IDisposable
     // then verifies ownership.
     public async Task LoginAsync(string username, string password)
     {
+        SensitiveLogRedactor.RegisterAccount(username, 0, null);
+        var generation = _sessionGeneration;
         SetState(SessionState.Authenticating);
 
         try
         {
             _auth = new SteamAuth();
-            _auth.LogMessage += msg => LogReceived?.Invoke(msg);
+            _auth.LogMessage += msg => LogReceived?.Invoke(SensitiveLogRedactor.Redact(msg));
             _auth.CodeProvider = async (wasIncorrect) =>
             {
                 AwaitingCode = true;
@@ -209,24 +251,49 @@ public class LauncherModel : IDisposable
             var result = await _auth.LoginWithCredentialsAsync(
                 username,
                 password,
-                _credentialStore.GuardData
+                _credentialStore.GetGuardDataForAccount(username)
             );
 
-            _credentialStore.Save(result.AccountName, result.RefreshToken, result.GuardData);
-            LauncherPatches.SavedAccountName = result.AccountName;
-            LauncherPatches.SavedRefreshToken = result.RefreshToken;
+            // The new token and Guard data exist before ownership verification
+            // and vault publication. Register them at the first possible point
+            // so even an unexpected exception in that gap cannot echo either
+            // value through a Steam/HTTP exception message.
+            SensitiveLogRedactor.RegisterAccount(
+                result.AccountName,
+                0,
+                result.RefreshToken,
+                result.GuardData
+            );
 
             _auth.Dispose();
             _auth = null;
 
             _connection = new SteamConnection(result.AccountName, result.RefreshToken);
-            await VerifyOwnershipAsync();
+            if (!await VerifyOwnershipAsync(result.AccountName, persistMarker: false))
+                return;
+            if (
+                !FinalizeAuthenticatedIdentity(
+                    result.AccountName,
+                    result.RefreshToken,
+                    result.GuardData,
+                    generation
+                )
+            )
+                return;
+            new OwnershipVerifier(_dataDir, result.AccountName).SaveMarker();
+            SetState(SessionState.LoggedIn);
             // issue #59 — a fresh interactive login just issued a brand-new
             // refresh token: both expiry signals reset so the auth gates
             // (BlockIfTokenExpired) reopen immediately without a restart.
             SavedTokenExpired = false;
             SavedTokenExpiringSoon = false;
             _ = MaybeRenewRefreshTokenAsync();
+
+            if (_accountSwitchPending)
+            {
+                PatchHelper.Log("[AccountSwitch] New account activated; restarting app");
+                GetGodotApp()?.Call("restartApp");
+            }
         }
         catch (Exception ex)
         {
@@ -255,6 +322,10 @@ public class LauncherModel : IDisposable
     // for the rest of THIS session, it just won't survive an app restart.
     private async Task MaybeRenewRefreshTokenAsync()
     {
+        var generation = _sessionGeneration;
+        var steamId = _credentialStore.SteamId;
+        var currentToken = _credentialStore.RefreshToken;
+        var connection = _connection;
         // 45 days, deliberately wider than the 14-day boot warning: renewal
         // only fires while a session is actually connected, so the window has
         // to cover realistic boot gaps — with a 14-day window anyone who
@@ -263,19 +334,34 @@ public class LauncherModel : IDisposable
         // "only renew a near-death token" safety property (a botched
         // persist/renewal can only cost a token that was dying anyway) while
         // covering monthly players.
-        if (!RefreshTokenExpiry.IsExpiringSoon(_credentialStore.RefreshToken, withinDays: 45))
+        if (!RefreshTokenExpiry.IsExpiringSoon(currentToken, withinDays: 45))
             return;
 
-        if (_connection == null)
+        if (connection == null || steamId == 0)
             return;
 
-        var newToken = await _connection
-            .TryRenewRefreshTokenAsync(_credentialStore.RefreshToken)
+        var newToken = await connection
+            .TryRenewRefreshTokenAsync(currentToken)
             .ConfigureAwait(false);
         if (string.IsNullOrEmpty(newToken))
             return;
 
-        _credentialStore.Save(_credentialStore.AccountName, newToken, _credentialStore.GuardData);
+        if (
+            !AccountSessionGuard.CanCommitRenewal(
+                generation,
+                _sessionGeneration,
+                steamId,
+                _credentialStore.SteamId,
+                ReferenceEquals(connection, _connection)
+            )
+        )
+        {
+            PatchHelper.Log("[AccountSwitch] Ignored token renewal from an inactive session");
+            return;
+        }
+
+        if (!_credentialStore.TryUpdateRefreshToken(steamId, currentToken, newToken))
+            return;
         LauncherPatches.SavedRefreshToken = newToken;
         // The renewed token pushed exp ~200 days out — the boot warning no
         // longer applies to what's now saved.
@@ -443,6 +529,174 @@ public class LauncherModel : IDisposable
         return StartSession();
     }
 
+    public async Task<bool> BeginAddAccountAsync()
+    {
+        if (!await PrepareForAccountChangeAsync().ConfigureAwait(false))
+            return false;
+        _accountSwitchPending = true;
+        return true;
+    }
+
+    public async Task<bool> ActivateStoredAccountAsync(ulong steamId)
+    {
+        if (steamId == 0 || steamId == _credentialStore.SteamId)
+            return false;
+        if (!await PrepareForAccountChangeAsync().ConfigureAwait(false))
+            return false;
+
+        var previousId = _credentialStore.SteamId;
+        var targetSlot = _credentialStore.GetDataSlot(steamId);
+        if (!AccountDataIsolation.TryActivate(_dataDir, targetSlot, out _))
+        {
+            PatchHelper.Log("[AccountSwitch] Target data directory could not be activated");
+            GetGodotApp()?.Call("restartApp");
+            return false;
+        }
+        if (!_credentialStore.TryActivate(steamId))
+        {
+            if (previousId != 0)
+                AccountDataIsolation.TryActivate(
+                    _dataDir,
+                    _credentialStore.GetDataSlot(previousId),
+                    out _
+                );
+            else
+                AccountDataIsolation.ClearActive();
+            PatchHelper.Log("[AccountSwitch] Active account vault update failed");
+            GetGodotApp()?.Call("restartApp");
+            return false;
+        }
+
+        LauncherPatches.ResetAccountSession();
+        PatchHelper.Log("[AccountSwitch] Stored account activated; restarting app");
+        GetGodotApp()?.Call("restartApp");
+        return true;
+    }
+
+    public void CancelAddAccount()
+    {
+        if (!_accountSwitchPending)
+            return;
+        PatchHelper.Log("[AccountSwitch] Add-account flow cancelled; restarting current account");
+        GetGodotApp()?.Call("restartApp");
+    }
+
+    private async Task<bool> PrepareForAccountChangeAsync()
+    {
+        Interlocked.Increment(ref _sessionGeneration);
+        _downloadCts?.Cancel();
+        _codeTcs?.TrySetCanceled();
+
+        var cloudStore = SteamKit2CloudSaveStore.Instance;
+        if (cloudStore != null)
+        {
+            bool drained;
+            try
+            {
+                drained = await Task.Run(() => cloudStore.Flush(300_000)).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                PatchHelper.Log(
+                    $"[AccountSwitch] Cloud drain failed; switch aborted: {ex.GetType().Name}"
+                );
+                return false;
+            }
+            if (!drained)
+            {
+                PatchHelper.Log(
+                    "[AccountSwitch] Pending cloud writes did not drain; switch aborted"
+                );
+                return false;
+            }
+            try
+            {
+                cloudStore.Dispose();
+            }
+            catch (Exception ex)
+            {
+                PatchHelper.Log(
+                    $"[AccountSwitch] Cloud teardown failed; switch aborted: {ex.GetType().Name}"
+                );
+                GetGodotApp()?.Call("restartApp");
+                return false;
+            }
+        }
+
+        try
+        {
+            _downloader?.Dispose();
+            _downloader = null;
+            _connection?.Dispose();
+            _connection = null;
+            _auth?.Dispose();
+            _auth = null;
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log(
+                $"[AccountSwitch] Session teardown failed; restarting unchanged account: {ex.GetType().Name}"
+            );
+            GetGodotApp()?.Call("restartApp");
+            return false;
+        }
+        LauncherPatches.ResetAccountSession();
+        return true;
+    }
+
+    private bool FinalizeAuthenticatedIdentity(
+        string accountName,
+        string refreshToken,
+        string guardData,
+        int generation
+    )
+    {
+        if (generation != _sessionGeneration || _connection == null)
+            return false;
+
+        var authenticatedId = _connection.AuthenticatedSteamId;
+        SteamAccountIdentity.TryGetSteamId(refreshToken, out var tokenId);
+        if (authenticatedId == 0 || (tokenId != 0 && tokenId != authenticatedId))
+        {
+            SetState(SessionState.Failed, "Steam account identity validation failed.");
+            return false;
+        }
+
+        var previousId = _credentialStore.SteamId;
+        var targetSlot =
+            _credentialStore.GetDataSlot(authenticatedId) ?? SteamCredentialStore.CreateDataSlot();
+        if (!AccountDataIsolation.TryActivate(_dataDir, targetSlot, out _))
+        {
+            SetState(SessionState.Failed, "Could not prepare the account data directory.");
+            return false;
+        }
+        if (
+            !_credentialStore.Save(
+                accountName,
+                refreshToken,
+                guardData,
+                authenticatedId,
+                targetSlot
+            )
+        )
+        {
+            if (previousId != 0)
+                AccountDataIsolation.TryActivate(
+                    _dataDir,
+                    _credentialStore.GetDataSlot(previousId),
+                    out _
+                );
+            else
+                AccountDataIsolation.ClearActive();
+            SetState(SessionState.Failed, "Could not save the encrypted account session.");
+            return false;
+        }
+
+        LauncherPatches.SavedAccountName = accountName;
+        LauncherPatches.SavedRefreshToken = refreshToken;
+        return true;
+    }
+
     public void Launch()
     {
         if (_credentialStore.HasCredentials)
@@ -464,6 +718,7 @@ public class LauncherModel : IDisposable
 
     public void Dispose()
     {
+        Interlocked.Increment(ref _sessionGeneration);
         // An unexpected parent/configuration teardown must release every caller
         // awaiting this UI. A normal PLAY already completed the launch gate true,
         // so the one-shot false fallback cannot overwrite it.
@@ -476,18 +731,25 @@ public class LauncherModel : IDisposable
             _connection?.Dispose();
     }
 
-    private async Task VerifyOwnershipAsync()
+    private async Task<bool> VerifyOwnershipAsync(string accountName, bool persistMarker = true)
     {
         SetState(SessionState.VerifyingOwnership);
 
-        var verifier = CreateOwnershipVerifier();
-        bool owns = await verifier.VerifyAsync(_connection);
+        var verifier = !string.IsNullOrWhiteSpace(accountName)
+            ? new OwnershipVerifier(_dataDir, accountName)
+            : null;
+        if (verifier == null)
+        {
+            SetState(SessionState.Failed, "Steam account identity is unavailable.");
+            return false;
+        }
+        bool owns = await verifier.VerifyAsync(_connection, persistMarker);
 
         if (owns)
         {
             PatchHelper.Log("[Launcher] Ownership verified");
             ConnectionResolved = true;
-            SetState(SessionState.LoggedIn);
+            return true;
         }
         else
         {
@@ -496,6 +758,7 @@ public class LauncherModel : IDisposable
                 SessionState.Failed,
                 "You don't own Slay the Spire 2. Purchase on Steam to play."
             );
+            return false;
         }
     }
 
@@ -617,7 +880,8 @@ public class LauncherModel : IDisposable
     // is now a one-shot action (ActionSection's Local Backup button), so there's
     // no persisted enabled/disabled state to load or save.
 
-    private static string CloudSyncPrefPath => Path.Combine(OS.GetDataDir(), "cloud_sync_enabled");
+    private static string CloudSyncPrefPath =>
+        AccountDataIsolation.GetAccountPreferencePath(OS.GetDataDir(), "cloud_sync_enabled");
 
     public static bool LoadCloudSyncPref()
     {
@@ -634,6 +898,7 @@ public class LauncherModel : IDisposable
     {
         try
         {
+            Directory.CreateDirectory(Path.GetDirectoryName(CloudSyncPrefPath)!);
             File.WriteAllText(CloudSyncPrefPath, enabled ? "true" : "false");
         }
         catch { }
