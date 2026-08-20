@@ -274,12 +274,18 @@ public static class CloudSyncCoordinator
                     continue;
                 }
 
-                // issue #81 — 불변 history run 이 이미 클라우드에 있으면 read/압축/RPC 없이
-                // 스킵한다. 파일명=고유 run id 인 완결 스냅샷이라 양쪽 존재 시 내용 동일 보장.
-                // 종전엔 파일마다 read+압축 후 ClientBeginFileUpload 로 DuplicateRequest 를
-                // 받아야 "already up to date" 판정이 나서 수백 파일 대량 왕복이 느렸다.
-                if (IsHistoryRunFile(path) && cloudStore.FileExists(path))
+                // History runs are immutable and uploaded by the game's write path. A local-only
+                // run here is therefore normally one that the 100-file/5MB cloud cap deliberately
+                // removed. Manual Push must not resurrect it, or every push trims old history and
+                // immediately uploads it again. Mutable saves below still use manifest SHA-1 delta.
+                if (IsHistoryRunFile(path))
+                {
+                    if (!cloudStore.FileExists(path))
+                        PatchHelper.Log(
+                            $"[Cloud] Push: skipping local-only history run {path} (cloud cap)"
+                        );
                     continue;
+                }
 
                 // P0-2 — a recovered-session progress.save push gets a
                 // one-time user confirmation before it's allowed to overwrite
@@ -610,7 +616,10 @@ public static class CloudSyncCoordinator
                 UserDataPathProvider.IsRunningModded = modded;
                 for (int profile = 1; profile <= 3; profile++)
                 {
-                    totalDeleted += TrimOneHistoryDir(cloud, SavePathCompat.GetHistoryPath(profile));
+                    totalDeleted += TrimOneHistoryDir(
+                        cloud,
+                        SavePathCompat.GetHistoryPath(profile)
+                    );
                 }
             }
         }
@@ -640,9 +649,7 @@ public static class CloudSyncCoordinator
         // .run 만(.backup/.tmp 제외). 게임과 동일하게 GetLastModifiedTime 최신순 정렬 후
         // 오래된 것(리스트 끝)부터 제거해 파일수·바이트 두 한도 이하로.
         var runs = files
-            .Where(f =>
-                f.EndsWith(".run") && !f.EndsWith(".backup") && !f.EndsWith(".tmp")
-            )
+            .Where(f => f.EndsWith(".run") && !f.EndsWith(".backup") && !f.EndsWith(".tmp"))
             .Select(f => $"{historyDir}/{f}")
             .OrderByDescending(p => cloud.GetLastModifiedTime(p))
             .ToList();

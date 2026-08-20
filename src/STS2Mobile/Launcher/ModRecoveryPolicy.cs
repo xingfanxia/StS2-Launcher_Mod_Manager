@@ -156,7 +156,8 @@ internal static class ModRecoveryPolicy
     public static ModRecoveryPlan BuildPartition(
         int partitionIndex,
         int partitionCount,
-        IReadOnlyCollection<RecoveryModDescriptor> source
+        IReadOnlyCollection<RecoveryModDescriptor> source,
+        IReadOnlyCollection<string> requiredModIds = null
     )
     {
         var mods = NormalizeMods(source);
@@ -172,6 +173,17 @@ internal static class ModRecoveryPolicy
         if (groups.Count == 0)
             return SafeMode("", 0);
 
+        var requiredIds = (requiredModIds ?? Array.Empty<string>())
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .ToHashSet(StringComparer.Ordinal);
+        if (
+            requiredIds.Count > 0
+            && requiredIds.Any(requiredId =>
+                !mods.Any(mod => string.Equals(mod.Id, requiredId, StringComparison.Ordinal))
+            )
+        )
+            return SafeMode("", mods.Count);
+
         int start = groups.Count * partitionIndex / partitionCount;
         int end = groups.Count * (partitionIndex + 1) / partitionCount;
         if (start >= end)
@@ -182,6 +194,8 @@ internal static class ModRecoveryPolicy
             .Take(end - start)
             .Select(group => group.Key)
             .ToHashSet(StringComparer.Ordinal);
+        foreach (var requiredDirectory in mods.Where(mod => requiredIds.Contains(mod.Id)))
+            selectedDirectories.Add(requiredDirectory.TopLevelDirectory);
         AddDependencyClosure(mods, selectedDirectories);
 
         return new ModRecoveryPlan(

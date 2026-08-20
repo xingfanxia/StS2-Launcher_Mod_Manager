@@ -24,16 +24,19 @@ internal static class StartupRecoveryFlow
         if (TryConsumeDebugModPartition(out int partitionIndex, out int partitionCount))
         {
             var debugMods = ScanEnabledMods();
+            bool hasRequiredCompanion = TryConsumeDebugModCompanion(out string companionId);
             var debugPlan = ModRecoveryPolicy.BuildPartition(
                 partitionIndex,
                 partitionCount,
-                debugMods
+                debugMods,
+                hasRequiredCompanion ? new[] { companionId } : Array.Empty<string>()
             );
             ModRecoverySession.Configure(debugPlan);
             _resolvedForProcess = true;
             PatchHelper.Log(
                 $"[FrameProbe] session-only mod partition armed "
                     + $"partition={partitionIndex}/{partitionCount} "
+                    + $"requiredCompanion={hasRequiredCompanion} "
                     + $"selectedMods={debugPlan.SelectedModCount}/{debugPlan.TotalModCount}"
             );
             return debugPlan;
@@ -284,6 +287,23 @@ internal static class StartupRecoveryFlow
             PatchHelper.Log($"[FrameProbe] mod-partition bridge failed: {ex.GetType().Name}");
             index = -1;
             count = 0;
+            return false;
+        }
+    }
+
+    private static bool TryConsumeDebugModCompanion(out string modId)
+    {
+        modId = "";
+        try
+        {
+            var app = LauncherModel.GetGodotApp();
+            modId = app == null ? "" : (string)app.Call("consumeDebugModCompanionId");
+            return !string.IsNullOrWhiteSpace(modId);
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log($"[FrameProbe] mod-companion bridge failed: {ex.GetType().Name}");
+            modId = "";
             return false;
         }
     }

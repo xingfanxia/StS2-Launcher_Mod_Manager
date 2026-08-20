@@ -4,6 +4,7 @@ using STS2Mobile.Launcher;
 using STS2Mobile.Launcher.Components;
 using STS2Mobile.Modding;
 using STS2Mobile.Multiplayer;
+using STS2Mobile.Patches;
 using STS2Mobile.Steam;
 
 var root = Path.Combine(Path.GetTempPath(), $"sts2-stability-tests-{Guid.NewGuid():N}");
@@ -11,6 +12,113 @@ Directory.CreateDirectory(root);
 
 try
 {
+    Run(
+        "two-finger tap emits one right click without leaking a primary click",
+        () =>
+        {
+            var gesture = new TwoFingerTapGesture();
+            var firstDown = gesture.Touch(0, pressed: true, 100, 200, 1_000);
+            var secondDown = gesture.Touch(1, pressed: true, 140, 200, 1_080);
+            Assert(
+                !firstDown.ConsumeOriginal
+                    && !firstDown.EmitRightClick
+                    && secondDown.ConsumeOriginal
+                    && !secondDown.EmitRightClick,
+                "the second finger did not take over the gesture"
+            );
+            Assert(
+                gesture.SuppressPrimaryEvent(pressed: false, 1_120),
+                "the emulated primary release leaked through the two-finger gesture"
+            );
+
+            var firstUp = gesture.Touch(0, pressed: false, 102, 201, 1_150);
+            var secondUp = gesture.Touch(1, pressed: false, 138, 201, 1_180);
+            Assert(
+                firstUp.ConsumeOriginal
+                    && !firstUp.EmitRightClick
+                    && secondUp.ConsumeOriginal
+                    && secondUp.EmitRightClick
+                    && Math.Abs(secondUp.X - 120f) < 0.001f
+                    && Math.Abs(secondUp.Y - 201f) < 0.001f,
+                "a valid two-finger tap did not emit exactly one centered right click"
+            );
+            Assert(
+                !gesture.SuppressPrimaryEvent(pressed: true, 1_190),
+                "the completed gesture swallowed the next independent primary press"
+            );
+        }
+    );
+
+    Run(
+        "two-finger drag, hold, stagger, third finger, and single tap never right-click",
+        () =>
+        {
+            static bool RunGesture(
+                ulong secondDownAt,
+                ulong finalUpAt,
+                float travel,
+                bool addThirdFinger
+            )
+            {
+                var gesture = new TwoFingerTapGesture();
+                gesture.Touch(0, pressed: true, 10, 10, 0);
+                gesture.Touch(1, pressed: true, 30, 10, secondDownAt);
+                if (travel > 0)
+                    gesture.Move(1, 30 + travel, 10, secondDownAt + 10);
+                if (addThirdFinger)
+                    gesture.Touch(2, pressed: true, 50, 10, secondDownAt + 20);
+                gesture.Touch(0, pressed: false, 10, 10, finalUpAt - 10);
+                var secondUp = gesture.Touch(1, pressed: false, 30 + travel, 10, finalUpAt);
+                return addThirdFinger
+                    ? gesture.Touch(2, pressed: false, 50, 10, finalUpAt + 10).EmitRightClick
+                    : secondUp.EmitRightClick;
+            }
+
+            var single = new TwoFingerTapGesture();
+            single.Touch(0, pressed: true, 10, 10, 0);
+            var singleUp = single.Touch(0, pressed: false, 10, 10, 100);
+
+            Assert(
+                !singleUp.ConsumeOriginal
+                    && !singleUp.EmitRightClick
+                    && !RunGesture(60, 180, travel: 48, addThirdFinger: false)
+                    && !RunGesture(60, 500, travel: 0, addThirdFinger: false)
+                    && !RunGesture(220, 300, travel: 0, addThirdFinger: false)
+                    && !RunGesture(60, 180, travel: 0, addThirdFinger: true),
+                "a non-tap multi-touch sequence synthesized a right click"
+            );
+        }
+    );
+
+    Run(
+        "two-finger right click is injected at the global game input boundary",
+        () =>
+        {
+            var repository = FindRepositoryRoot();
+            var touchPatches = File.ReadAllText(
+                Path.Combine(repository, "src", "STS2Mobile", "Patches", "TouchInputPatches.cs")
+            );
+            var targets = File.ReadAllText(
+                Path.Combine(repository, "tools", "patch-target-audit", "sts2-targets.tsv")
+            );
+            Assert(
+                touchPatches.Contains(
+                    "typeof(MegaCrit.Sts2.Core.Nodes.NGame)",
+                    StringComparison.Ordinal
+                )
+                    && touchPatches.Contains("nameof(GameInputPrefix)", StringComparison.Ordinal)
+                    && touchPatches.Contains("InputEventScreenTouch", StringComparison.Ordinal)
+                    && touchPatches.Contains("InputEventScreenDrag", StringComparison.Ordinal)
+                    && touchPatches.Contains("Input.ParseInputEvent", StringComparison.Ordinal)
+                    && targets.Contains(
+                        "optional\tmethod\tMegaCrit.Sts2.Core.Nodes.NGame\t_Input\tbare\t-",
+                        StringComparison.Ordinal
+                    ),
+                "the gesture state was not connected to the audited global input path"
+            );
+        }
+    );
+
     Run(
         "Steam account switching isolates saves without deleting shared or legacy data",
         () =>
@@ -1700,6 +1808,49 @@ try
             Assert(
                 !CloudContentHash.Matches("not-a-steam-sha", "abc"),
                 "unknown manifest hash formats must fail open to transfer"
+            );
+        }
+    );
+
+    Run(
+        "manual cloud push does not resurrect history removed by the cloud cap",
+        () =>
+        {
+            var repository = FindRepositoryRoot();
+            var coordinator = File.ReadAllText(
+                Path.Combine(repository, "src", "STS2Mobile", "Steam", "CloudSyncCoordinator.cs")
+            );
+            var pushStart = coordinator.IndexOf(
+                "public static async Task<CloudBatchOutcome> ManualPushAllAsync(",
+                StringComparison.Ordinal
+            );
+            var pullStart = coordinator.IndexOf(
+                "public static async Task<CloudBatchOutcome> ManualPullAllAsync(",
+                StringComparison.Ordinal
+            );
+            Assert(
+                pushStart >= 0 && pullStart > pushStart,
+                "manual cloud push implementation could not be isolated"
+            );
+
+            var manualPush = coordinator[pushStart..pullStart];
+            var historyGuard = manualPush.IndexOf(
+                "if (IsHistoryRunFile(path))",
+                StringComparison.Ordinal
+            );
+            var contentRead = manualPush.IndexOf(
+                "string content = localStore.ReadFile(path);",
+                StringComparison.Ordinal
+            );
+            Assert(
+                historyGuard >= 0
+                    && historyGuard < contentRead
+                    && manualPush.Contains(
+                        "Push: skipping local-only history run",
+                        StringComparison.Ordinal
+                    )
+                    && manualPush.Contains("manifest SHA-1 match", StringComparison.Ordinal),
+                "manual push can re-upload capped local-only history or lost mutable-file delta checks"
             );
         }
     );
@@ -3583,6 +3734,42 @@ try
                 "invalid debug partition must fail closed to Safe Mode"
             );
 
+            var partitionWithCompanion = ModRecoveryPolicy.BuildPartition(
+                0,
+                4,
+                mods,
+                new[] { "D" }
+            );
+            Assert(
+                partitionWithCompanion.Action == RecoveryAction.DiagnosticPartition,
+                "valid debug companion must preserve partition mode"
+            );
+            Assert(
+                partitionWithCompanion.ShouldExposeDirectory("/mods", "/mods/a"),
+                "partition selection remains visible with companion"
+            );
+            Assert(
+                partitionWithCompanion.ShouldExposeDirectory("/mods", "/mods/d"),
+                "required companion must be visible outside the selected partition"
+            );
+            Assert(
+                ModRecoveryPolicy
+                    .BuildPartition(0, 4, mods, new[] { "missing" })
+                    .SkipOptionalWarmup,
+                "missing debug companion must fail closed to Safe Mode"
+            );
+
+            var companionWithDependency = ModRecoveryPolicy.BuildPartition(
+                3,
+                4,
+                mods,
+                new[] { "B" }
+            );
+            Assert(
+                companionWithDependency.ShouldExposeDirectory("/mods", "/mods/a"),
+                "debug companion dependency closure must be visible"
+            );
+
             var repository = FindRepositoryRoot();
             var loader = File.ReadAllText(
                 Path.Combine(repository, "src", "STS2Mobile", "Patches", "ModLoaderPatches.cs")
@@ -3622,6 +3809,84 @@ try
                 !fileIo.Contains("Directory.Move", StringComparison.Ordinal)
                     && !fileIo.Contains("Directory.Delete", StringComparison.Ordinal),
                 "session isolation must never mutate real mod directories"
+            );
+        }
+    );
+
+    Run(
+        "BaseLib treasure compatibility replaces only the unsafe direct-field postfix",
+        () =>
+        {
+            Assert(
+                BaseLibTreasurePatchPolicy.RequiresReplacement(
+                    new Version(3, 4, 5),
+                    new[] { "_runState", "_chestButton" },
+                    inspectionSucceeded: true
+                ),
+                "the proven BaseLib 3.4.5 direct-field shape must be replaced"
+            );
+            Assert(
+                !BaseLibTreasurePatchPolicy.RequiresReplacement(
+                    new Version(3, 4, 6),
+                    Array.Empty<string>(),
+                    inspectionSucceeded: true
+                ),
+                "a reflected future postfix must remain installed"
+            );
+            Assert(
+                !BaseLibTreasurePatchPolicy.RequiresReplacement(
+                    new Version(3, 4, 5),
+                    new[] { "_runState" },
+                    inspectionSucceeded: true
+                ),
+                "a partial or unrelated field shape cannot be guessed unsafe"
+            );
+            Assert(
+                BaseLibTreasurePatchPolicy.RequiresReplacement(
+                    new Version(3, 4, 4),
+                    Array.Empty<string>(),
+                    inspectionSucceeded: false
+                ),
+                "known-bad 3.4.4 must fail safe when IL inspection is unavailable"
+            );
+            Assert(
+                !BaseLibTreasurePatchPolicy.RequiresReplacement(
+                    new Version(3, 4, 3),
+                    Array.Empty<string>(),
+                    inspectionSucceeded: false
+                ),
+                "known-good 3.4.3 and older builds must not lose custom chests"
+            );
+
+            var repository = FindRepositoryRoot();
+            var compat = File.ReadAllText(
+                Path.Combine(repository, "src", "STS2Mobile", "Patches", "BaseLibCompatPatches.cs")
+            );
+            Assert(
+                compat.Contains("PatchProcessor", StringComparison.Ordinal)
+                    && compat.Contains(
+                        ".GetOriginalInstructions(postfix)",
+                        StringComparison.Ordinal
+                    )
+                    && compat.Contains(
+                        "instruction.opcode == OpCodes.Ldfld",
+                        StringComparison.Ordinal
+                    )
+                    && compat.Contains(
+                        "_harmony.Unpatch(ready, _unsafeTreasurePostfix)",
+                        StringComparison.Ordinal
+                    )
+                    && compat.Contains("SafeTreasureRoomReadyPostfix", StringComparison.Ordinal)
+                    && compat.Contains(
+                        "_treasureRunStateField?.GetValue(__instance)",
+                        StringComparison.Ordinal
+                    )
+                    && compat.Contains(
+                        "_treasureChestButtonField.GetValue(__instance)",
+                        StringComparison.Ordinal
+                    )
+                    && !compat.Contains("UnpatchAll(\"BaseLib\")", StringComparison.Ordinal),
+                "the runtime fix must fingerprint and replace only the unsafe treasure postfix"
             );
         }
     );

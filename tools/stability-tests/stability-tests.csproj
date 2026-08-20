@@ -75,6 +75,14 @@
       Link="QuickRestartPerformancePolicy.cs"
     />
     <Compile
+      Include="../../src/STS2Mobile/Patches/TwoFingerTapGesture.cs"
+      Link="TwoFingerTapGesture.cs"
+    />
+    <Compile
+      Include="../../src/STS2Mobile/Patches/BaseLibTreasurePatchPolicy.cs"
+      Link="BaseLibTreasurePatchPolicy.cs"
+    />
+    <Compile
       Include="../../src/STS2Mobile/Steam/BoundedAsyncWork.cs"
       Link="BoundedAsyncWork.cs"
     />

@@ -2,7 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Reflection.Emit;
+using Godot;
 using HarmonyLib;
+using MegaCrit.Sts2.Core.Nodes.GodotExtensions;
+using MegaCrit.Sts2.Core.Nodes.Rooms;
+using MegaCrit.Sts2.Core.Runs;
 
 namespace STS2Mobile.Patches;
 
@@ -37,11 +42,27 @@ namespace STS2Mobile.Patches;
 //    on ModelDb.Init, using BaseLib's own CustomEnums.GenerateKey via
 //    reflection so unique keys are produced regardless of whether BaseLib's
 //    own prefix later runs.
+//
+// 3) Treasure-room direct-field fix (BaseLib 3.4.4/3.4.5): its
+//    NTreasureRoom._Ready postfix changed from reflection to direct access of
+//    publicized private fields. Mono Android corrupts Godot's static StringName
+//    state when that postfix runs. Fingerprint the unsafe IL, remove only that
+//    exact BaseLib-owned postfix, and preserve custom chests with a reflection-
+//    only equivalent. Future reflected BaseLib implementations stay untouched.
 public static class BaseLibCompatPatches
 {
     private static Harmony _harmony;
     private static bool _wired;
     private static bool _customEnumFixupDone;
+    private static bool _treasureCompatInstalled;
+    private static bool _treasureCompatFailureLogged;
+    private static MethodInfo _unsafeTreasurePostfix;
+    private static Type _customActModelType;
+    private static PropertyInfo _customChestSceneProperty;
+    private static MethodInfo _customChestCreate;
+    private static FieldInfo _treasureRunStateField;
+    private static FieldInfo _treasureChestNodeField;
+    private static FieldInfo _treasureChestButtonField;
 
     public static void Apply(Harmony harmony)
     {
@@ -60,6 +81,7 @@ public static class BaseLibCompatPatches
         var asm = args.LoadedAssembly;
         TryPatchAsyncMethodCallCreate(asm);
         TryRegisterCustomEnumFixupOnModelDbInit(asm);
+        TryRegisterTreasureRoomFieldAccessCompat(asm);
         _wired = true;
     }
 
@@ -110,7 +132,194 @@ public static class BaseLibCompatPatches
         return false;
     }
 
-    // ---- (2) CustomEnum static-field fixup on ModelDb.Init -------------------
+    // ---- (2) NTreasureRoom._Ready direct-field replacement -----------------
+
+    private static void TryRegisterTreasureRoomFieldAccessCompat(Assembly baseLibAsm)
+    {
+        try
+        {
+            var patchType = baseLibAsm.GetType(
+                "BaseLib.Abstracts.CustomActModel+CustomActTreasureChest"
+            );
+            var postfix = AccessTools.Method(patchType, "InsertCustomChestVisualNode");
+            if (postfix == null)
+                return;
+
+            bool inspectionSucceeded = false;
+            var directTreasureFields = new List<string>();
+            try
+            {
+                directTreasureFields = PatchProcessor
+                    .GetOriginalInstructions(postfix)
+                    .Where(instruction =>
+                        instruction.opcode == OpCodes.Ldfld
+                        && instruction.operand is FieldInfo field
+                        && field.DeclaringType == typeof(NTreasureRoom)
+                    )
+                    .Select(instruction => ((FieldInfo)instruction.operand).Name)
+                    .Distinct(StringComparer.Ordinal)
+                    .ToList();
+                inspectionSucceeded = true;
+            }
+            catch (Exception ex)
+            {
+                PatchHelper.Log(
+                    $"BaseLibCompat: treasure postfix IL inspection degraded: {ex.GetType().Name}"
+                );
+            }
+
+            if (
+                !BaseLibTreasurePatchPolicy.RequiresReplacement(
+                    baseLibAsm.GetName().Version,
+                    directTreasureFields,
+                    inspectionSucceeded
+                )
+            )
+                return;
+
+            var initializer = AccessTools.Method(
+                baseLibAsm.GetType("BaseLib.BaseLibMain"),
+                "Initialize"
+            );
+            var initializerPostfix = AccessTools.Method(
+                typeof(BaseLibCompatPatches),
+                nameof(BaseLibInitializeTreasureCompatPostfix)
+            );
+            if (initializer == null || initializerPostfix == null)
+            {
+                PatchHelper.Log(
+                    "BaseLibCompat: unsafe treasure postfix found but initializer bridge is unavailable"
+                );
+                return;
+            }
+
+            _unsafeTreasurePostfix = postfix;
+            _harmony.Patch(initializer, postfix: new HarmonyMethod(initializerPostfix));
+            PatchHelper.Log(
+                $"BaseLibCompat: unsafe treasure postfix armed for replacement "
+                    + $"version={baseLibAsm.GetName().Version} inspected={inspectionSucceeded}"
+            );
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log(
+                $"BaseLibCompat: treasure postfix compatibility wiring failed: {ex.GetType().Name}"
+            );
+        }
+    }
+
+    public static void BaseLibInitializeTreasureCompatPostfix()
+    {
+        if (_treasureCompatInstalled || _unsafeTreasurePostfix == null)
+            return;
+
+        try
+        {
+            var ready = AccessTools.Method(typeof(NTreasureRoom), nameof(NTreasureRoom._Ready));
+            if (ready == null)
+                return;
+
+            _harmony.Unpatch(ready, _unsafeTreasurePostfix);
+            _treasureCompatInstalled = true;
+
+            var baseLibAsm = _unsafeTreasurePostfix.DeclaringType?.Assembly;
+            _customActModelType = baseLibAsm?.GetType("BaseLib.Abstracts.CustomActModel");
+            _customChestSceneProperty = AccessTools.Property(
+                _customActModelType,
+                "CustomChestScene"
+            );
+            var customChestType = baseLibAsm?.GetType(
+                "BaseLib.BaseLibScenes.Acts.NCustomTreasureRoomChest"
+            );
+            _customChestCreate = AccessTools.Method(customChestType, "Create");
+            _treasureRunStateField = AccessTools.Field(typeof(NTreasureRoom), "_runState");
+            _treasureChestNodeField = AccessTools.Field(typeof(NTreasureRoom), "_chestNode");
+            _treasureChestButtonField = AccessTools.Field(typeof(NTreasureRoom), "_chestButton");
+
+            if (
+                _customActModelType == null
+                || _customChestSceneProperty == null
+                || _customChestCreate == null
+                || _treasureRunStateField == null
+                || _treasureChestNodeField == null
+                || _treasureChestButtonField == null
+            )
+            {
+                PatchHelper.Log(
+                    "BaseLibCompat: unsafe treasure postfix removed; custom chest bridge unavailable, using vanilla chest"
+                );
+                return;
+            }
+
+            var safePostfix = AccessTools.Method(
+                typeof(BaseLibCompatPatches),
+                nameof(SafeTreasureRoomReadyPostfix)
+            );
+            _harmony.Patch(ready, postfix: new HarmonyMethod(safePostfix));
+            PatchHelper.Log(
+                "BaseLibCompat: replaced unsafe NTreasureRoom._Ready postfix with reflection-safe bridge"
+            );
+        }
+        catch (Exception ex)
+        {
+            _treasureCompatInstalled = true;
+            PatchHelper.Log(
+                $"BaseLibCompat: treasure postfix replacement degraded to vanilla chest: {ex.GetType().Name}"
+            );
+        }
+    }
+
+    public static void SafeTreasureRoomReadyPostfix(NTreasureRoom __instance)
+    {
+        try
+        {
+            var runState = _treasureRunStateField?.GetValue(__instance) as IRunState;
+            var act = runState?.Act;
+            if (act == null || !_customActModelType.IsInstanceOfType(act))
+                return;
+
+            var customChestScene = _customChestSceneProperty.GetValue(act) as string;
+            if (string.IsNullOrWhiteSpace(customChestScene))
+                return;
+
+            var chestNode = _treasureChestNodeField.GetValue(__instance) as Node2D;
+            var chestButton = _treasureChestButtonField.GetValue(__instance) as NButton;
+            var parent = chestNode?.GetParent();
+            if (chestNode == null || chestButton == null || parent == null)
+            {
+                LogTreasureCompatFailureOnce("required reflected node is unavailable");
+                return;
+            }
+
+            var customChest =
+                _customChestCreate.Invoke(
+                    null,
+                    new object[] { __instance, runState, chestButton, customChestScene }
+                ) as Node;
+            if (customChest == null)
+            {
+                LogTreasureCompatFailureOnce("custom chest creation returned null");
+                return;
+            }
+
+            parent.AddChild(customChest);
+            chestNode.Visible = false;
+        }
+        catch (Exception ex)
+        {
+            LogTreasureCompatFailureOnce(ex.GetType().Name);
+        }
+    }
+
+    private static void LogTreasureCompatFailureOnce(string reason)
+    {
+        if (_treasureCompatFailureLogged)
+            return;
+        _treasureCompatFailureLogged = true;
+        PatchHelper.Log($"BaseLibCompat: custom chest bridge degraded to vanilla chest ({reason})");
+    }
+
+    // ---- (3) CustomEnum static-field fixup on ModelDb.Init -------------------
 
     private static void TryRegisterCustomEnumFixupOnModelDbInit(Assembly baseLibAsm)
     {
