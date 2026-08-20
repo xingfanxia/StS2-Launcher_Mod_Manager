@@ -155,9 +155,14 @@ public static class ModLoaderPatches
         )
         {
             mod.state = ModLoadState.Failed;
+            bool disabled = ModRuntimeCompatibility.TryDisableForFutureLaunch(
+                mod.manifest?.id,
+                mod.assembly
+            );
             PatchHelper.Log(
                 $"[ModCompat] Marked mod '{mod.manifest?.id}' failed for this run after "
-                    + "Mono rejected its initializer IL"
+                    + "Mono rejected its initializer IL; future-launch auto-disable="
+                    + disabled
             );
         }
         bool loaded = mod?.state == ModLoadState.Loaded;

@@ -1,5 +1,9 @@
+using System.Net;
+using STS2Mobile;
 using STS2Mobile.Launcher;
 using STS2Mobile.Launcher.Components;
+using STS2Mobile.Modding;
+using STS2Mobile.Multiplayer;
 using STS2Mobile.Steam;
 
 var root = Path.Combine(Path.GetTempPath(), $"sts2-stability-tests-{Guid.NewGuid():N}");
@@ -7,6 +11,1361 @@ Directory.CreateDirectory(root);
 
 try
 {
+    Run(
+        "Steam account switching isolates saves without deleting shared or legacy data",
+        () =>
+        {
+            const ulong firstId = 76561198000000001;
+            const ulong secondId = 76561198000000002;
+            const string firstSlot = "11111111111111111111111111111111";
+            const string secondSlot = "22222222222222222222222222222222";
+            var payload = Convert
+                .ToBase64String(System.Text.Encoding.UTF8.GetBytes($"{{\"sub\":\"{firstId}\"}}"))
+                .TrimEnd('=')
+                .Replace('+', '-')
+                .Replace('/', '_');
+            var token = $"e30.{payload}.signature-fixture";
+            Assert(
+                SteamAccountIdentity.TryGetSteamId(token, out var parsedId) && parsedId == firstId,
+                "the encrypted-vault token subject did not resolve to its SteamID"
+            );
+            Assert(
+                !SteamAccountIdentity.TryGetSteamId("not-a-token", out _)
+                    && !SteamAccountIdentity.TryGetSteamId("e30.W10.sig", out _),
+                "a malformed or subject-less token crossed the identity boundary"
+            );
+            Assert(
+                AccountSessionGuard.CanCommitRenewal(7, 7, firstId, firstId, true)
+                    && !AccountSessionGuard.CanCommitRenewal(7, 8, firstId, firstId, true)
+                    && !AccountSessionGuard.CanCommitRenewal(7, 7, firstId, secondId, true)
+                    && !AccountSessionGuard.CanCommitRenewal(7, 7, firstId, firstId, false),
+                "a stale generation, account, or connection could commit a renewed token"
+            );
+
+            var validVault = new[]
+            {
+                new SteamCredentialDescriptor(firstId, true, true, firstSlot),
+                new SteamCredentialDescriptor(secondId, true, true, secondSlot),
+            };
+            Assert(
+                SteamCredentialVaultPolicy.Validate(2, 2, firstId, validVault)
+                    == SteamCredentialVaultError.None
+                    && SteamCredentialVaultPolicy.Validate(3, 2, firstId, validVault)
+                        == SteamCredentialVaultError.UnsupportedVersion
+                    && SteamCredentialVaultPolicy.Validate(2, 2, firstId, null)
+                        == SteamCredentialVaultError.MissingAccounts
+                    && SteamCredentialVaultPolicy.Validate(
+                        2,
+                        2,
+                        firstId,
+                        validVault.Append(validVault[0]).ToArray()
+                    ) == SteamCredentialVaultError.DuplicateAccount
+                    && SteamCredentialVaultPolicy.Validate(
+                        2,
+                        2,
+                        firstId,
+                        new[] { new SteamCredentialDescriptor(firstId, true, true, "invalid") }
+                    ) == SteamCredentialVaultError.InvalidDataSlot
+                    && SteamCredentialVaultPolicy.Validate(2, 2, 999, validVault)
+                        == SteamCredentialVaultError.InvalidActiveAccount,
+                "the encrypted account vault accepted ambiguous or unrecoverable metadata"
+            );
+            Assert(
+                validVault[0].ToString() == nameof(SteamCredentialDescriptor),
+                "credential descriptor default ToString can expose identity or slot data"
+            );
+
+            var vaultFixture = Path.Combine(root, "vault-transaction", "credentials.enc");
+            Directory.CreateDirectory(Path.GetDirectoryName(vaultFixture)!);
+            File.WriteAllText(vaultFixture, "old-encrypted-vault");
+            Assert(
+                !NonDestructiveFileTransaction.TryWriteAtomic(
+                    vaultFixture,
+                    "new-encrypted-vault",
+                    out var publishFailure,
+                    beforePublish: () => throw new IOException("injected before publish")
+                )
+                    && publishFailure == nameof(IOException)
+                    && File.ReadAllText(vaultFixture) == "old-encrypted-vault",
+                "a failed vault publish replaced or removed the prior encrypted vault"
+            );
+            Assert(
+                NonDestructiveFileTransaction.TryWriteAtomic(
+                    vaultFixture,
+                    "new-encrypted-vault",
+                    out publishFailure
+                )
+                    && publishFailure == null
+                    && File.ReadAllText(vaultFixture) == "new-encrypted-vault",
+                "a retry could not atomically publish the new encrypted vault"
+            );
+
+            var dataDir = Path.Combine(root, "account-isolation");
+            var legacy = Path.Combine(dataDir, "default", "1", "profile1", "saves");
+            Directory.CreateDirectory(legacy);
+            File.WriteAllText(Path.Combine(legacy, "progress.save"), "legacy-progress");
+            File.WriteAllText(Path.Combine(dataDir, "cloud_sync_enabled"), "false");
+            File.WriteAllText(Path.Combine(dataDir, "pending_upload_batch"), "12345");
+            var firstSave = Path.Combine(
+                dataDir,
+                "account_profiles",
+                firstSlot,
+                "data",
+                "default",
+                "1",
+                "profile1",
+                "saves",
+                "progress.save"
+            );
+            Directory.CreateDirectory(Path.GetDirectoryName(firstSave)!);
+            File.WriteAllText(firstSave, "account-progress");
+
+            Assert(
+                AccountDataIsolation.TryActivate(dataDir, firstSlot, out var activationError)
+                    && activationError == null,
+                "the first account data directory could not be activated"
+            );
+            Assert(
+                File.ReadAllText(firstSave) == "account-progress",
+                "legacy adoption overwrote existing account data"
+            );
+            Assert(
+                File.Exists(Path.Combine(legacy, "progress.save")),
+                "legacy save data was removed during adoption"
+            );
+            Assert(
+                File.ReadAllText(
+                    Path.Combine(dataDir, "account_profiles", firstSlot, "cloud_sync_enabled")
+                ) == "false"
+                    && File.ReadAllText(
+                        Path.Combine(dataDir, "account_profiles", firstSlot, "pending_upload_batch")
+                    ) == "12345"
+                    && File.Exists(Path.Combine(dataDir, "cloud_sync_enabled"))
+                    && File.Exists(Path.Combine(dataDir, "pending_upload_batch")),
+                "legacy cloud preference or upload-recovery state was not copied and preserved"
+            );
+            Assert(
+                AccountDataIsolation.RewriteLocalGodotPath(
+                    "user://default/1/profile1/saves/progress.save"
+                )
+                    == $"user://account_profiles/{firstSlot}/data/default/1/profile1/saves/progress.save",
+                "local Godot I/O did not resolve to the active opaque account slot"
+            );
+            var scopedSettings =
+                $"user://account_profiles/{firstSlot}/data/default/1/settings.save.tmp";
+            Assert(
+                AccountDataIsolation.RewriteLocalGodotPath(scopedSettings) == scopedSettings
+                    && AccountDataIsolation.RewriteLocalGodotPath(
+                        "user://default/1/" + scopedSettings
+                    ) == scopedSettings,
+                "a resolved account path was nested again during atomic save rename"
+            );
+
+            Assert(
+                AccountDataIsolation.TryActivate(dataDir, secondSlot, out activationError),
+                "a second account data directory could not be activated"
+            );
+            Assert(
+                !File.Exists(
+                    Path.Combine(
+                        dataDir,
+                        "account_profiles",
+                        secondSlot,
+                        "data",
+                        "default",
+                        "1",
+                        "profile1",
+                        "saves",
+                        "progress.save"
+                    )
+                ),
+                "legacy data was cloned into more than the first adopted account"
+            );
+            Assert(
+                AccountDataIsolation
+                    .GetAccountPreferencePath(dataDir, "cloud_sync_enabled")
+                    .Contains(secondSlot, StringComparison.Ordinal),
+                "launcher preferences were not account scoped"
+            );
+            Assert(
+                AccountDataIsolation.RewriteLocalGodotPath("user://settings/global.cfg")
+                    == "user://settings/global.cfg",
+                "account isolation rewrote data outside the game account root"
+            );
+
+            Assert(
+                AccountDataIsolation.TryActivate(dataDir, firstSlot, out activationError),
+                "the first account could not be reactivated for backup adoption"
+            );
+            var externalSaves = Path.Combine(root, "external-backups");
+            var legacyBackupFile = Path.Combine(
+                externalSaves,
+                "manual",
+                "legacy-set",
+                "default",
+                "1",
+                "progress.save"
+            );
+            Directory.CreateDirectory(Path.GetDirectoryName(legacyBackupFile)!);
+            File.WriteAllText(legacyBackupFile, "legacy-backup");
+            Assert(
+                AccountDataIsolation.TryAdoptExternalBackups(dataDir, externalSaves),
+                "the first account did not adopt legacy external backups"
+            );
+            Assert(
+                File.Exists(legacyBackupFile)
+                    && File.Exists(
+                        Path.Combine(
+                            externalSaves,
+                            "accounts",
+                            firstSlot,
+                            "manual",
+                            "legacy-set",
+                            "default",
+                            "1",
+                            "progress.save"
+                        )
+                    ),
+                "legacy external backup adoption removed the source or missed the destination"
+            );
+            Assert(
+                AccountDataIsolation.TryActivate(dataDir, secondSlot, out activationError)
+                    && !AccountDataIsolation.TryAdoptExternalBackups(dataDir, externalSaves)
+                    && !Directory.Exists(
+                        Path.Combine(externalSaves, "accounts", secondSlot, "manual", "legacy-set")
+                    ),
+                "a later account inherited the first account's legacy backup sets"
+            );
+
+            const string accountName = "privacy_fixture_user";
+            const string secretToken = "privacy_fixture_token";
+            const string guardData = "privacy_fixture_guard";
+            SensitiveLogRedactor.RegisterAccount(accountName, secondId, secretToken, guardData);
+            SensitiveLogRedactor.RegisterOpaqueValue(secondSlot);
+            var redacted = SensitiveLogRedactor.Redact(
+                $"account={accountName} id={secondId} token={secretToken} guard={guardData} slot={secondSlot}"
+            );
+            Assert(
+                !redacted.Contains(accountName, StringComparison.OrdinalIgnoreCase)
+                    && !redacted.Contains(secondId.ToString(), StringComparison.Ordinal)
+                    && !redacted.Contains(secretToken, StringComparison.Ordinal)
+                    && !redacted.Contains(guardData, StringComparison.Ordinal)
+                    && !redacted.Contains(secondSlot, StringComparison.Ordinal),
+                "account identity, token, Guard data, or opaque slot survived diagnostic redaction"
+            );
+
+            var repository = FindRepositoryRoot();
+            var storeSource = File.ReadAllText(
+                Path.Combine(repository, "src", "STS2Mobile", "Steam", "SteamCredentialStore.cs")
+            );
+            var modelSource = File.ReadAllText(
+                Path.Combine(repository, "src", "STS2Mobile", "Launcher", "LauncherModel.cs")
+            );
+            var authSource = File.ReadAllText(
+                Path.Combine(repository, "src", "STS2Mobile", "Steam", "SteamAuth.cs")
+            );
+            var backupSource = File.ReadAllText(
+                Path.Combine(repository, "src", "STS2Mobile", "Steam", "LocalBackupService.cs")
+            );
+            var pendingBatchSource = File.ReadAllText(
+                Path.Combine(repository, "src", "STS2Mobile", "Steam", "PendingUploadBatch.cs")
+            );
+            var androidSource = File.ReadAllText(
+                Path.Combine(
+                    repository,
+                    "android",
+                    "src",
+                    "com",
+                    "game",
+                    "sts2launcher",
+                    "modmanager",
+                    "GodotApp.java"
+                )
+            );
+            var controllerSource = File.ReadAllText(
+                Path.Combine(repository, "src", "STS2Mobile", "Launcher", "LauncherController.cs")
+            );
+            var encryptMethodIndex = androidSource.IndexOf(
+                "public String encryptString",
+                StringComparison.Ordinal
+            );
+            var decryptMethodIndex = androidSource.IndexOf(
+                "public String decryptString",
+                StringComparison.Ordinal
+            );
+            var encryptKeyIndex =
+                encryptMethodIndex < 0
+                    ? -1
+                    : androidSource.IndexOf(
+                        "SecretKey key = getOrCreateKeystoreKey();",
+                        encryptMethodIndex,
+                        StringComparison.Ordinal
+                    );
+            var decryptKeyIndex =
+                decryptMethodIndex < 0
+                    ? -1
+                    : androidSource.IndexOf(
+                        "SecretKey key = getExistingKeystoreKey();",
+                        decryptMethodIndex,
+                        StringComparison.Ordinal
+                    );
+            var sessionStartIndex = controllerSource.IndexOf(
+                "var result = _model.StartSession();",
+                StringComparison.Ordinal
+            );
+            var externalDirectoryIndex = controllerSource.IndexOf(
+                "AppPaths.EnsureExternalDirectories();",
+                StringComparison.Ordinal
+            );
+            Assert(
+                storeSource.Contains("CredentialVault", StringComparison.Ordinal)
+                    && storeSource.Contains("TryActivate", StringComparison.Ordinal)
+                    && storeSource.Contains("public bool LoadFailed", StringComparison.Ordinal)
+                    && storeSource.Contains(
+                        "SteamCredentialVaultPolicy.Validate",
+                        StringComparison.Ordinal
+                    )
+                    && !storeSource.Contains("generatedSlot", StringComparison.Ordinal)
+                    && !storeSource.Contains(
+                        "File.Delete(_credentialsPath)",
+                        StringComparison.Ordinal
+                    )
+                    && !storeSource.Contains("deleteKeystoreKey", StringComparison.Ordinal)
+                    && !androidSource.Contains("deleteKeystoreKey", StringComparison.Ordinal)
+                    && encryptMethodIndex >= 0
+                    && decryptMethodIndex > encryptMethodIndex
+                    && encryptKeyIndex > encryptMethodIndex
+                    && encryptKeyIndex < decryptMethodIndex
+                    && decryptKeyIndex > decryptMethodIndex
+                    && modelSource.Contains(
+                        "AccountSessionGuard.CanCommitRenewal",
+                        StringComparison.Ordinal
+                    )
+                    && modelSource.Contains(
+                        "SteamKit2CloudSaveStore.Instance",
+                        StringComparison.Ordinal
+                    )
+                    && modelSource.Contains(
+                        "FastPathResult.AccountDataUnavailable",
+                        StringComparison.Ordinal
+                    )
+                    && modelSource.Contains(
+                        "SensitiveLogRedactor.RegisterAccount(\n                result.AccountName",
+                        StringComparison.Ordinal
+                    )
+                    && modelSource.IndexOf(
+                        "SensitiveLogRedactor.RegisterAccount(\n                result.AccountName",
+                        StringComparison.Ordinal
+                    )
+                        < modelSource.IndexOf(
+                            "new SteamConnection(result.AccountName, result.RefreshToken)",
+                            StringComparison.Ordinal
+                        )
+                    && !authSource.Contains("Authenticating as '", StringComparison.Ordinal)
+                    && !authSource.Contains(
+                        "Authentication successful for '",
+                        StringComparison.Ordinal
+                    )
+                    && authSource.Contains(
+                        "public override string ToString() => nameof(AuthResult);",
+                        StringComparison.Ordinal
+                    )
+                    && storeSource.Contains(
+                        "public override string ToString() => nameof(SteamAccountSummary);",
+                        StringComparison.Ordinal
+                    ),
+                "account switching lost its no-delete, stale-session, or no-account-log guard"
+            );
+            Assert(
+                backupSource.Contains(
+                    "AccountDataIsolation.RewriteLocalGodotPath",
+                    StringComparison.Ordinal
+                )
+                    && pendingBatchSource.Contains(
+                        "AccountDataIsolation.GetAccountPreferencePath",
+                        StringComparison.Ordinal
+                    ),
+                "backup restore or stale cloud-batch recovery bypassed the active account slot"
+            );
+            Assert(
+                sessionStartIndex >= 0 && externalDirectoryIndex > sessionStartIndex,
+                "external backup adoption ran before the active account slot was established"
+            );
+            Assert(
+                !File.Exists(
+                    Path.Combine(repository, "src", "STS2Mobile", "Patches", "PrivacyLogPatches.cs")
+                ),
+                "a global hot-path game logger patch was reintroduced despite its native crash regression"
+            );
+        }
+    );
+
+    Run(
+        "LAN invite codes are versioned, direct-only, and fail closed",
+        () =>
+        {
+            var local = new LanJoinEndpoint(IPAddress.Parse("192.168.10.8"), 33771);
+            var code = LanInviteCode.Format(local);
+            Assert(code == "sts2lan:v1:192.168.10.8:33771", "the v1 invite wire format drifted");
+            Assert(
+                LanInviteCode.TryParseJoinInput(code, out var parsed, out var parseError)
+                    && parsed == local
+                    && parseError == LanInviteParseError.None,
+                "a canonical v1 invite did not round-trip"
+            );
+            Assert(
+                LanInviteCode.TryParseJoinInput("10.0.0.7", out var defaultPort, out parseError)
+                    && defaultPort.Port == LanInviteCode.DefaultGamePort
+                    && defaultPort.Address.Equals(IPAddress.Parse("10.0.0.7")),
+                "plain IPv4 must keep the legacy default-port behavior"
+            );
+            Assert(
+                LanInviteCode.TryParseJoinInput(
+                    "100.64.1.2:40123",
+                    out var explicitPort,
+                    out parseError
+                )
+                    && explicitPort.Port == 40123,
+                "plain IPv4:port must remain accepted"
+            );
+
+            var rejected = new Dictionary<string, LanInviteParseError>
+            {
+                [""] = LanInviteParseError.Empty,
+                ["sts2lan:v2:192.168.1.2:33771"] = LanInviteParseError.UnsupportedVersion,
+                ["sts2lan:v1:example.com:33771"] = LanInviteParseError.InvalidAddress,
+                ["sts2lan:v1:::1:33771"] = LanInviteParseError.InvalidFormat,
+                ["192.168.1:33771"] = LanInviteParseError.InvalidAddress,
+                ["192.168.001.2:33771"] = LanInviteParseError.InvalidAddress,
+                ["0xC0.0xA8.0x01.0x02:33771"] = LanInviteParseError.InvalidAddress,
+                ["0300.0250.01.02:33771"] = LanInviteParseError.InvalidAddress,
+                ["sts2lan:v1:192.168.1.2:0"] = LanInviteParseError.InvalidPort,
+                ["sts2lan:v1:192.168.1.2:65536"] = LanInviteParseError.InvalidPort,
+                ["sts2lan:v1:192.168.1.2:+33771"] = LanInviteParseError.InvalidPort,
+                ["sts2lan:v1:192.168.1.2: 33771"] = LanInviteParseError.InvalidPort,
+                ["127.0.0.1:33771"] = LanInviteParseError.UnsafeAddress,
+                ["0.0.0.0:33771"] = LanInviteParseError.UnsafeAddress,
+                ["239.1.2.3:33771"] = LanInviteParseError.UnsafeAddress,
+            };
+            foreach (var (input, expectedError) in rejected)
+            {
+                Assert(
+                    !LanInviteCode.TryParseJoinInput(input, out _, out parseError)
+                        && parseError == expectedError,
+                    $"unsafe invite fixture crossed the parser boundary: {expectedError}"
+                );
+            }
+            Assert(
+                !LanInviteCode.TryParseJoinInput(
+                    new string('1', LanInviteCode.MaxInputLength + 1),
+                    out _,
+                    out parseError
+                )
+                    && parseError == LanInviteParseError.TooLong,
+                "oversized invite input was accepted"
+            );
+
+            var candidates = LanInviteCode.SelectShareableEndpoints(
+                new[]
+                {
+                    IPAddress.Loopback,
+                    IPAddress.Any,
+                    IPAddress.Parse("169.254.4.5"),
+                    IPAddress.Parse("224.0.0.1"),
+                    IPAddress.Parse("8.8.8.8"),
+                    IPAddress.Parse("100.64.2.3"),
+                    IPAddress.Parse("192.168.1.20"),
+                    IPAddress.Parse("192.168.1.20"),
+                }
+            );
+            Assert(
+                candidates
+                    .Select(c => c.Address.ToString())
+                    .SequenceEqual(new[] { "192.168.1.20", "100.64.2.3", "8.8.8.8" }),
+                "share candidates retained an unsafe address or lost deterministic priority"
+            );
+            var routePreferred = LanInviteCode.SelectShareableEndpoints(
+                new[] { IPAddress.Parse("172.30.10.2"), IPAddress.Parse("192.168.1.20") },
+                preferredAddress: IPAddress.Parse("192.168.1.20")
+            );
+            Assert(
+                routePreferred[0].Address.Equals(IPAddress.Parse("192.168.1.20"))
+                    && routePreferred[1].Address.Equals(IPAddress.Parse("172.30.10.2")),
+                "the default-route address did not outrank a virtual private interface"
+            );
+            var manyCandidates = LanInviteCode.SelectShareableEndpoints(
+                Enumerable.Range(1, 20).Select(last => IPAddress.Parse($"10.0.0.{last}"))
+            );
+            Assert(
+                manyCandidates.Count == LanInviteCode.MaxShareChoices
+                    && manyCandidates[0].Address.Equals(IPAddress.Parse("10.0.0.1"))
+                    && manyCandidates[^1].Address.Equals(IPAddress.Parse("10.0.0.8")),
+                "share candidates exceeded the Android chooser budget or lost priority order"
+            );
+
+            var repository = FindRepositoryRoot();
+            var lanPatcher = File.ReadAllText(
+                Path.Combine(repository, "src", "STS2Mobile", "Patches", "LanMultiplayerPatcher.cs")
+            );
+            var android = File.ReadAllText(
+                Path.Combine(
+                    repository,
+                    "android",
+                    "src",
+                    "com",
+                    "game",
+                    "sts2launcher",
+                    "modmanager",
+                    "GodotApp.java"
+                )
+            );
+            Assert(
+                lanPatcher.Contains("InviteButtonOnReleasePrefix", StringComparison.Ordinal)
+                    && lanPatcher.Contains("showLanInviteChooser", StringComparison.Ordinal)
+                    && lanPatcher.Contains(
+                        "LanInviteCode.TryParseJoinInput",
+                        StringComparison.Ordinal
+                    )
+                    && android.Contains("Intent.ACTION_SEND", StringComparison.Ordinal)
+                    && android.Contains("Intent.createChooser", StringComparison.Ordinal)
+                    && android.Contains("ClipboardManager", StringComparison.Ordinal)
+                    && android.Contains(
+                        "private AlertDialog lanInviteDialog",
+                        StringComparison.Ordinal
+                    )
+                    && android.Contains(
+                        "dismissLanInviteDialogOnUiThread();",
+                        StringComparison.Ordinal
+                    )
+                    && android.Contains("debug_force_lan_invite_chooser", StringComparison.Ordinal)
+                    && lanPatcher.Contains("DismissLanInviteChooser();", StringComparison.Ordinal)
+                    && !lanPatcher.Contains("Joining LAN game at {ip}", StringComparison.Ordinal)
+                    && !lanPatcher.Contains(
+                        "Discovered LAN host: {hostname}",
+                        StringComparison.Ordinal
+                    )
+                    && !lanPatcher.Contains(
+                        "Text override failed for {ip}",
+                        StringComparison.Ordinal
+                    )
+                    && !android.Contains("share.setPackage(", StringComparison.Ordinal),
+                "LAN invite UI bypassed the bounded parser, Sharesheet, or private-log boundary"
+            );
+        }
+    );
+
+    Run(
+        "Steam lobby direct-invite metadata is closed, bounded, and replay-safe",
+        () =>
+        {
+            const long now = 1_700_000_000;
+            const string launcherBuild = "0.4.8";
+            const string gameBuild = "public-107.1";
+            const string firstNonce = "ABCDEFGHIJKLMNOPQRSTUV";
+            const string secondNonce = "ZYXWVUTSRQPONMLKJIHGFE";
+
+            var generatedNonce = SteamLobbyInviteMetadata.CreateNonce();
+            var generatedNonceFixture = CreateSteamInviteMetadataFixture(now + 300, generatedNonce);
+            Assert(
+                generatedNonce.Length == SteamLobbyInviteMetadata.NonceLength
+                    && SteamLobbyInviteMetadata.TryValidateAndConsume(
+                        generatedNonceFixture,
+                        launcherBuild,
+                        gameBuild,
+                        now,
+                        SteamLobbyInviteSenderTrust.Friend,
+                        new SteamLobbyInviteReplayGuard(),
+                        out _,
+                        out _
+                    ),
+                "the production CSPRNG nonce generator violated the metadata wire contract"
+            );
+
+            var createdMetadata = SteamLobbyInviteMetadata.Create(
+                launcherBuild,
+                gameBuild,
+                new[]
+                {
+                    new LanJoinEndpoint(IPAddress.Parse("192.168.10.8"), 33771),
+                    new LanJoinEndpoint(IPAddress.Parse("10.0.0.7"), 33771),
+                },
+                now
+            );
+            Assert(
+                SteamLobbyInviteMetadata.TryValidateAndConsume(
+                    createdMetadata,
+                    launcherBuild,
+                    gameBuild,
+                    now,
+                    SteamLobbyInviteSenderTrust.Friend,
+                    new SteamLobbyInviteReplayGuard(),
+                    out var createdInvite,
+                    out _
+                )
+                    && createdInvite.EndpointCandidates.Count == 2,
+                "the production metadata builder did not round-trip its closed schema"
+            );
+            bool duplicateBuilderRejected = false;
+            try
+            {
+                var duplicate = new LanJoinEndpoint(IPAddress.Parse("10.0.0.7"), 33771);
+                SteamLobbyInviteMetadata.Create(
+                    launcherBuild,
+                    gameBuild,
+                    new[] { duplicate, duplicate },
+                    now
+                );
+            }
+            catch (ArgumentException)
+            {
+                duplicateBuilderRejected = true;
+            }
+            Assert(
+                duplicateBuilderRejected,
+                "the metadata producer emitted duplicate endpoint candidates"
+            );
+
+            var sendLimiter = new SteamLobbyInviteSendRateLimiter();
+            Assert(
+                sendLimiter.TryAcquire(0, now) == SteamLobbyInviteSendRateResult.InvalidTarget
+                    && sendLimiter.TryAcquire(11, now) == SteamLobbyInviteSendRateResult.Accepted
+                    && sendLimiter.TryAcquire(11, now + 1)
+                        == SteamLobbyInviteSendRateResult.TargetCooldown
+                    && sendLimiter.TryAcquire(12, now + 1)
+                        == SteamLobbyInviteSendRateResult.Accepted
+                    && sendLimiter.TryAcquire(13, now + 2)
+                        == SteamLobbyInviteSendRateResult.Accepted
+                    && sendLimiter.TryAcquire(14, now + 3)
+                        == SteamLobbyInviteSendRateResult.GlobalLimit
+                    && sendLimiter.TryAcquire(
+                        11,
+                        now + SteamLobbyInviteSendRateLimiter.WindowSeconds
+                    ) == SteamLobbyInviteSendRateResult.Accepted,
+                "Steam friend invite rate limiting lost its target or global bound"
+            );
+            Assert(
+                SteamLobbyInviteSessionGuard.CanHandleCallback(7, 7, 11, 11, true, true)
+                    && !SteamLobbyInviteSessionGuard.CanHandleCallback(6, 7, 11, 11, true, true)
+                    && !SteamLobbyInviteSessionGuard.CanHandleCallback(7, 7, 11, 12, true, true)
+                    && !SteamLobbyInviteSessionGuard.CanHandleCallback(7, 7, 11, 11, false, true)
+                    && !SteamLobbyInviteSessionGuard.CanHandleCallback(7, 7, 11, 11, true, false),
+                "a stale, cross-account, torn-down, or disconnected invite callback was accepted"
+            );
+            Assert(
+                SteamLobbyInviteSessionGuard.CanAcceptInvite(now + 1, now, true, true)
+                    && !SteamLobbyInviteSessionGuard.CanAcceptInvite(now, now, true, true)
+                    && !SteamLobbyInviteSessionGuard.CanAcceptInvite(now + 1, now, false, true)
+                    && !SteamLobbyInviteSessionGuard.CanAcceptInvite(now + 1, now, true, false),
+                "an expired, replaced, or torn-down prompt remained acceptable"
+            );
+            Assert(
+                SteamLobbyInviteMetadata.IsBuildToken("0.4.8-qa.1")
+                    && !SteamLobbyInviteMetadata.IsBuildToken("public/private")
+                    && !SteamLobbyInviteMetadata.IsBuildToken("public build")
+                    && !SteamLobbyInviteMetadata.IsBuildToken(new string('a', 49)),
+                "build identities no longer fail closed to the bounded token grammar"
+            );
+
+            var valid = CreateSteamInviteMetadataFixture(
+                now + 300,
+                firstNonce,
+                "sts2lan:v1:192.168.10.8:33771,sts2lan:v1:10.0.0.7:33771"
+            );
+            var replayGuard = new SteamLobbyInviteReplayGuard();
+            Assert(
+                SteamLobbyInviteMetadata.TryValidateAndConsume(
+                    valid,
+                    launcherBuild,
+                    gameBuild,
+                    now,
+                    SteamLobbyInviteSenderTrust.Friend,
+                    replayGuard,
+                    out var invite,
+                    out var metadataError
+                )
+                    && metadataError == SteamLobbyInviteMetadataError.None
+                    && invite.EndpointCandidates.Count == 2
+                    && invite.LauncherBuild == launcherBuild
+                    && invite.GameBuild == gameBuild
+                    && invite.ToString() == nameof(SteamLobbyDirectInvite)
+                    && !invite.ToString().Contains("192.168", StringComparison.Ordinal)
+                    && !invite.ToString().Contains(firstNonce, StringComparison.Ordinal),
+                "a valid direct-invite contract failed or exposed private connection metadata"
+            );
+            Assert(
+                !SteamLobbyInviteMetadata.TryValidateAndConsume(
+                    valid,
+                    launcherBuild,
+                    gameBuild,
+                    now,
+                    SteamLobbyInviteSenderTrust.Friend,
+                    replayGuard,
+                    out _,
+                    out metadataError
+                )
+                    && metadataError == SteamLobbyInviteMetadataError.Replay,
+                "a consumed invite nonce produced a duplicate prompt"
+            );
+
+            var concurrentGuard = new SteamLobbyInviteReplayGuard();
+            var concurrentMetadata = CreateSteamInviteMetadataFixture(
+                now + 300,
+                "0123456789abcdefghijkl"
+            );
+            int concurrentAcceptCount = 0;
+            Parallel.For(
+                0,
+                16,
+                iteration =>
+                {
+                    _ = iteration;
+                    if (
+                        SteamLobbyInviteMetadata.TryValidateAndConsume(
+                            concurrentMetadata,
+                            launcherBuild,
+                            gameBuild,
+                            now,
+                            SteamLobbyInviteSenderTrust.Friend,
+                            concurrentGuard,
+                            out _,
+                            out _
+                        )
+                    )
+                        Interlocked.Increment(ref concurrentAcceptCount);
+                }
+            );
+            Assert(
+                concurrentAcceptCount == 1,
+                "concurrent duplicate callbacks produced more than one invite prompt"
+            );
+
+            void AssertRejected(
+                Dictionary<string, string> candidate,
+                SteamLobbyInviteMetadataError expectedError,
+                string context,
+                SteamLobbyInviteSenderTrust trust = SteamLobbyInviteSenderTrust.Friend,
+                SteamLobbyInviteReplayGuard guard = null
+            )
+            {
+                Assert(
+                    !SteamLobbyInviteMetadata.TryValidateAndConsume(
+                        candidate,
+                        launcherBuild,
+                        gameBuild,
+                        now,
+                        trust,
+                        guard ?? new SteamLobbyInviteReplayGuard(),
+                        out _,
+                        out var actualError
+                    )
+                        && actualError == expectedError,
+                    $"{context}: expected {expectedError}, got {actualError}"
+                );
+            }
+
+            var missing = new Dictionary<string, string>(valid, StringComparer.Ordinal);
+            missing.Remove(SteamLobbyInviteMetadata.NonceKey);
+            AssertRejected(missing, SteamLobbyInviteMetadataError.MissingField, "missing nonce");
+
+            var unknown = new Dictionary<string, string>(valid, StringComparer.Ordinal)
+            {
+                ["account_name"] = "must-not-cross-boundary",
+            };
+            AssertRejected(
+                unknown,
+                SteamLobbyInviteMetadataError.UnknownField,
+                "unknown/private field"
+            );
+
+            var wrongCase = new Dictionary<string, string>(valid, StringComparer.Ordinal);
+            wrongCase.Remove(SteamLobbyInviteMetadata.SchemaKey);
+            wrongCase["STS2MM_SCHEMA"] = SteamLobbyInviteMetadata.SchemaV1;
+            AssertRejected(
+                wrongCase,
+                SteamLobbyInviteMetadataError.UnknownField,
+                "non-canonical key casing"
+            );
+
+            var tooLong = new Dictionary<string, string>(valid, StringComparer.Ordinal)
+            {
+                [SteamLobbyInviteMetadata.EndpointsKey] = new string(
+                    'a',
+                    SteamLobbyInviteMetadata.MaxMetadataCharacters
+                ),
+            };
+            AssertRejected(tooLong, SteamLobbyInviteMetadataError.TooLong, "oversized metadata");
+
+            var unsupportedSchema = new Dictionary<string, string>(valid, StringComparer.Ordinal)
+            {
+                [SteamLobbyInviteMetadata.SchemaKey] = "sts2mm-direct-v2",
+            };
+            AssertRejected(
+                unsupportedSchema,
+                SteamLobbyInviteMetadataError.UnsupportedSchema,
+                "unknown schema"
+            );
+
+            var wrongApp = new Dictionary<string, string>(valid, StringComparer.Ordinal)
+            {
+                [SteamLobbyInviteMetadata.AppIdKey] = "480",
+            };
+            AssertRejected(wrongApp, SteamLobbyInviteMetadataError.WrongAppId, "wrong App ID");
+
+            var wrongTransport = new Dictionary<string, string>(valid, StringComparer.Ordinal)
+            {
+                [SteamLobbyInviteMetadata.TransportKey] = "steam-relay",
+            };
+            AssertRejected(
+                wrongTransport,
+                SteamLobbyInviteMetadataError.UnknownTransport,
+                "unsupported transport"
+            );
+
+            var invalidBuild = new Dictionary<string, string>(valid, StringComparer.Ordinal)
+            {
+                [SteamLobbyInviteMetadata.GameBuildKey] = "../../private/path",
+            };
+            AssertRejected(
+                invalidBuild,
+                SteamLobbyInviteMetadataError.InvalidBuild,
+                "non-token build"
+            );
+
+            var oldLauncher = new Dictionary<string, string>(valid, StringComparer.Ordinal)
+            {
+                [SteamLobbyInviteMetadata.LauncherBuildKey] = "0.4.7",
+            };
+            AssertRejected(
+                oldLauncher,
+                SteamLobbyInviteMetadataError.IncompatibleLauncherBuild,
+                "launcher mismatch"
+            );
+
+            var oldGame = new Dictionary<string, string>(valid, StringComparer.Ordinal)
+            {
+                [SteamLobbyInviteMetadata.GameBuildKey] = "public-106.9",
+            };
+            AssertRejected(
+                oldGame,
+                SteamLobbyInviteMetadataError.IncompatibleGameBuild,
+                "game mismatch"
+            );
+
+            foreach (var invalidExpiry in new[] { "", "01700000300", "+1700000300", "x" })
+            {
+                var candidate = new Dictionary<string, string>(valid, StringComparer.Ordinal)
+                {
+                    [SteamLobbyInviteMetadata.ExpiresKey] = invalidExpiry,
+                };
+                AssertRejected(
+                    candidate,
+                    SteamLobbyInviteMetadataError.InvalidExpiry,
+                    "invalid expiry"
+                );
+            }
+
+            var expired = CreateSteamInviteMetadataFixture(now, secondNonce);
+            AssertRejected(expired, SteamLobbyInviteMetadataError.Expired, "expired invite");
+
+            var future = CreateSteamInviteMetadataFixture(
+                now + SteamLobbyInviteMetadata.MaxFutureLifetimeSeconds + 1,
+                secondNonce
+            );
+            AssertRejected(
+                future,
+                SteamLobbyInviteMetadataError.ExpiryTooFarInFuture,
+                "unbounded future expiry"
+            );
+
+            foreach (
+                var invalidNonce in new[]
+                {
+                    "short",
+                    "ABCDEFGHIJKLMNOPQRSTU=",
+                    "ABCDEFGHIJKLMNOPQRSTU!",
+                }
+            )
+            {
+                var candidate = CreateSteamInviteMetadataFixture(now + 300, invalidNonce);
+                AssertRejected(
+                    candidate,
+                    SteamLobbyInviteMetadataError.InvalidNonce,
+                    "invalid nonce"
+                );
+            }
+
+            var plainEndpoint = CreateSteamInviteMetadataFixture(
+                now + 300,
+                secondNonce,
+                "192.168.10.8:33771"
+            );
+            AssertRejected(
+                plainEndpoint,
+                SteamLobbyInviteMetadataError.InvalidEndpoint,
+                "non-canonical endpoint"
+            );
+
+            var unsafeEndpoint = CreateSteamInviteMetadataFixture(
+                now + 300,
+                secondNonce,
+                "sts2lan:v1:127.0.0.1:33771"
+            );
+            AssertRejected(
+                unsafeEndpoint,
+                SteamLobbyInviteMetadataError.InvalidEndpoint,
+                "unsafe endpoint"
+            );
+
+            var duplicateEndpoint = CreateSteamInviteMetadataFixture(
+                now + 300,
+                secondNonce,
+                "sts2lan:v1:10.0.0.7:33771,sts2lan:v1:10.0.0.7:33771"
+            );
+            AssertRejected(
+                duplicateEndpoint,
+                SteamLobbyInviteMetadataError.DuplicateEndpoint,
+                "duplicate endpoint"
+            );
+
+            var tooManyEndpoints = CreateSteamInviteMetadataFixture(
+                now + 300,
+                secondNonce,
+                string.Join(
+                    ',',
+                    Enumerable
+                        .Range(1, LanInviteCode.MaxShareChoices + 1)
+                        .Select(value => $"sts2lan:v1:10.0.0.{value}:33771")
+                )
+            );
+            AssertRejected(
+                tooManyEndpoints,
+                SteamLobbyInviteMetadataError.TooManyEndpoints,
+                "too many endpoints"
+            );
+
+            var trustGuard = new SteamLobbyInviteReplayGuard();
+            AssertRejected(
+                valid,
+                SteamLobbyInviteMetadataError.UntrustedSender,
+                "non-friend sender",
+                SteamLobbyInviteSenderTrust.NonFriend,
+                trustGuard
+            );
+            AssertRejected(
+                valid,
+                SteamLobbyInviteMetadataError.UntrustedSender,
+                "blocked sender",
+                SteamLobbyInviteSenderTrust.Blocked,
+                trustGuard
+            );
+            Assert(
+                SteamLobbyInviteMetadata.TryValidateAndConsume(
+                    valid,
+                    launcherBuild,
+                    gameBuild,
+                    now,
+                    SteamLobbyInviteSenderTrust.Friend,
+                    trustGuard,
+                    out _,
+                    out metadataError
+                ),
+                "an untrusted sender consumed the nonce before a trusted callback"
+            );
+
+            Assert(
+                !SteamLobbyInviteMetadata.TryValidateAndConsume(
+                    valid,
+                    launcherBuild,
+                    gameBuild,
+                    now,
+                    SteamLobbyInviteSenderTrust.Friend,
+                    replayGuard: null,
+                    out _,
+                    out metadataError
+                )
+                    && metadataError == SteamLobbyInviteMetadataError.ReplayStateUnavailable,
+                "missing replay state did not fail closed"
+            );
+
+            var boundedGuard = new SteamLobbyInviteReplayGuard(capacity: 1);
+            var firstBounded = CreateSteamInviteMetadataFixture(now + 100, firstNonce);
+            var secondBounded = CreateSteamInviteMetadataFixture(now + 100, secondNonce);
+            Assert(
+                SteamLobbyInviteMetadata.TryValidateAndConsume(
+                    firstBounded,
+                    launcherBuild,
+                    gameBuild,
+                    now,
+                    SteamLobbyInviteSenderTrust.Friend,
+                    boundedGuard,
+                    out _,
+                    out _
+                ),
+                "the bounded replay guard rejected its first invite"
+            );
+            AssertRejected(
+                secondBounded,
+                SteamLobbyInviteMetadataError.ReplayCapacityExceeded,
+                "live replay capacity",
+                SteamLobbyInviteSenderTrust.Friend,
+                boundedGuard
+            );
+            var afterExpiry = CreateSteamInviteMetadataFixture(now + 200, secondNonce);
+            Assert(
+                SteamLobbyInviteMetadata.TryValidateAndConsume(
+                    afterExpiry,
+                    launcherBuild,
+                    gameBuild,
+                    now + 101,
+                    SteamLobbyInviteSenderTrust.Friend,
+                    boundedGuard,
+                    out _,
+                    out metadataError
+                ),
+                "expired replay entries were not reclaimed within the fixed capacity"
+            );
+
+            var repository = FindRepositoryRoot();
+            var source = File.ReadAllText(
+                Path.Combine(
+                    repository,
+                    "src",
+                    "STS2Mobile",
+                    "Multiplayer",
+                    "SteamLobbyInviteMetadata.cs"
+                )
+            );
+            Assert(
+                !source.Contains("PatchHelper.Log", StringComparison.Ordinal)
+                    && !source.Contains("SteamID", StringComparison.Ordinal)
+                    && !source.Contains("refreshToken", StringComparison.Ordinal)
+                    && !source.Contains("accountName", StringComparison.Ordinal),
+                "the pure Steam invite boundary acquired a credential, identity, or logging dependency"
+            );
+        }
+    );
+
+    Run(
+        "Steam friend picker searches names safely and applies the requested rank",
+        () =>
+        {
+            Assert(
+                SteamInviteFriendListPolicy.Matches("Persona", "备注昵称", "sona")
+                    && SteamInviteFriendListPolicy.Matches("Persona", "备注昵称", "备注")
+                    && !SteamInviteFriendListPolicy.Matches("Persona", "备注昵称", "missing"),
+                "friend search did not match both Steam persona names and nicknames"
+            );
+            Assert(
+                SteamInviteFriendListPolicy.IsVisible(isOnline: true, showOffline: false)
+                    && !SteamInviteFriendListPolicy.IsVisible(isOnline: false, showOffline: false)
+                    && SteamInviteFriendListPolicy.IsVisible(
+                        isOnline: false,
+                        showOffline: false,
+                        query: "目标"
+                    )
+                    && SteamInviteFriendListPolicy.IsVisible(isOnline: false, showOffline: true),
+                "offline friends were not hidden by default or recoverable by search/toggle"
+            );
+            int nickname = SteamInviteFriendListPolicy.Rank(true, false, false, false);
+            int playing = SteamInviteFriendListPolicy.Rank(false, true, false, true);
+            int recent = SteamInviteFriendListPolicy.Rank(false, false, true, true);
+            int online = SteamInviteFriendListPolicy.Rank(false, false, false, true);
+            Assert(
+                nickname > playing && playing > recent && recent > online,
+                "friend rank is not nickname, playing STS2, recently played STS2, then online"
+            );
+            Assert(
+                SteamInviteFriendListPolicy.PrimaryName("Persona", "Remark") == "Remark"
+                    && SteamInviteFriendListPolicy.PrimaryName("Persona", "") == "Persona",
+                "nickname did not become the primary visible identity"
+            );
+            var moreThanOneRenderWindow = Enumerable
+                .Range(0, SteamInviteFriendListPolicy.MaxRenderedFriends + 1)
+                .Select(index =>
+                    index == SteamInviteFriendListPolicy.MaxRenderedFriends
+                        ? "目标好友"
+                        : $"Friend {index}"
+                )
+                .Where(name => SteamInviteFriendListPolicy.Matches(name, "", "目标"));
+            var lateSearchMatch = SteamInviteFriendListPolicy.RenderWindow(moreThanOneRenderWindow);
+            Assert(
+                lateSearchMatch.Count == 1 && lateSearchMatch[0] == "目标好友",
+                "a friend beyond the first rendered 200 rows disappeared before search"
+            );
+        }
+    );
+
+    Run(
+        "Steam invite production flow is explicit, lifecycle-bound, and log-safe",
+        () =>
+        {
+            var repository = FindRepositoryRoot();
+            string Read(params string[] parts) =>
+                File.ReadAllText(Path.Combine(new[] { repository }.Concat(parts).ToArray()));
+
+            var coordinator = Read("src", "STS2Mobile", "Multiplayer", "SteamInviteCoordinator.cs");
+            var bridge = Read("src", "STS2Mobile", "Multiplayer", "SteamLobbyInviteBridge.cs");
+            var dialogs = Read("src", "STS2Mobile", "Multiplayer", "SteamInviteDialogs.cs");
+            var connection = Read("src", "STS2Mobile", "Steam", "SteamConnection.cs");
+            var patcher = Read("src", "STS2Mobile", "Patches", "LanMultiplayerPatcher.cs");
+            var lifecycle = Read("src", "STS2Mobile", "Patches", "AppLifecyclePatches.cs");
+
+            Assert(
+                coordinator.Contains("SteamInviteMethodDialog", StringComparison.Ordinal)
+                    && coordinator.Contains(
+                        "SteamInviteFriendPickerDialog",
+                        StringComparison.Ordinal
+                    )
+                    && coordinator.Contains("dialog.Confirmed +=", StringComparison.Ordinal)
+                    && coordinator.IndexOf("dialog.Confirmed +=", StringComparison.Ordinal)
+                        < coordinator.IndexOf("BeginSendInvite(", StringComparison.Ordinal)
+                    && coordinator.Contains(
+                        "The invite request was submitted to Steam; delivery is not guaranteed.",
+                        StringComparison.Ordinal
+                    ),
+                "Steam sending bypassed method choice, friend choice, explicit confirmation, or truthful delivery copy"
+            );
+            Assert(
+                coordinator.Contains(
+                    "LauncherOverlay.Show(GetOverlayContext(owner), modal);",
+                    StringComparison.Ordinal
+                )
+                    && coordinator.Contains(
+                        "GetOverlayContext(owner),\n            message",
+                        StringComparison.Ordinal
+                    ),
+                "host invite overlays can be clipped to the game Invite button instead of the viewport root"
+            );
+            Assert(
+                coordinator.Contains(
+                    "result != SteamInviteBridgeResult.Success",
+                    StringComparison.Ordinal
+                )
+                    && coordinator.Contains(
+                        "join(screen, endpoint.Address",
+                        StringComparison.Ordinal
+                    )
+                    && coordinator.IndexOf(
+                        "result != SteamInviteBridgeResult.Success",
+                        StringComparison.Ordinal
+                    )
+                        < coordinator.IndexOf(
+                            "join(screen, endpoint.Address",
+                            StringComparison.Ordinal
+                        ),
+                "ENet join can start before Steam lobby acceptance succeeds"
+            );
+            Assert(
+                coordinator.Contains("BackgroundGraceSeconds = 30", StringComparison.Ordinal)
+                    && coordinator.Contains("++_generation", StringComparison.Ordinal)
+                    && coordinator.Contains("OnAppBackgrounded", StringComparison.Ordinal)
+                    && coordinator.Contains("OnAppForegrounded", StringComparison.Ordinal)
+                    && lifecycle.Contains(
+                        "SteamInviteCoordinator.OnAppBackgrounded();",
+                        StringComparison.Ordinal
+                    )
+                    && lifecycle.Contains(
+                        "SteamInviteCoordinator.OnAppForegrounded();",
+                        StringComparison.Ordinal
+                    ),
+                "HOME/resume no longer expires the Steam connection and stale callback generation"
+            );
+            Assert(
+                coordinator.Contains(
+                    "internal static void OnHostDisconnected()",
+                    StringComparison.Ordinal
+                )
+                    && coordinator.Contains(
+                        "if (_mode != SurfaceMode.Host)\n                return;",
+                        StringComparison.Ordinal
+                    ),
+                "a client disconnect can tear down a newly opened Join listener"
+            );
+            Assert(
+                CountOccurrences(patcher, "SteamInviteCoordinator.") == 5
+                    && patcher.Contains(
+                        "SteamInviteCoordinator.OnJoinScreenOpened((Node)__instance, JoinViaIp);",
+                        StringComparison.Ordinal
+                    )
+                    && patcher.Contains(
+                        "SteamInviteCoordinator.ShowInviteMethod(owner, endpoints, ShowLanInviteChooser);",
+                        StringComparison.Ordinal
+                    ),
+                "the upstream-sensitive LAN patcher absorbed Steam session ownership instead of narrow lifecycle hooks"
+            );
+            Assert(
+                bridge.Contains("ELobbyType.FriendsOnly", StringComparison.Ordinal)
+                    && bridge.Contains(
+                        "SteamLobbyInviteSessionGuard.CanAcceptInvite",
+                        StringComparison.Ordinal
+                    )
+                    && CountOccurrences(bridge, "SteamLobbyInviteSessionGuard.CanAcceptInvite") == 2
+                    && bridge.Contains("SteamLobbyInviteSendRateLimiter", StringComparison.Ordinal)
+                    && bridge.Contains(
+                        "TryLeaveLobby(callback.Lobby?.SteamID ?? attemptedLobby);",
+                        StringComparison.Ordinal
+                    )
+                    && CountOccurrences(bridge, "TryLeaveLobby(attemptedLobby);") == 2
+                    && !bridge.Contains("PatchHelper.Log", StringComparison.Ordinal),
+                "the bridge lost friends-only, expiry recheck, cleanup, rate-limit, or log-free guarantees"
+            );
+            Assert(
+                connection.Contains(
+                    "Subscribe<SteamFriends.FriendsListCallback>",
+                    StringComparison.Ordinal
+                )
+                    && connection.Contains("if (!cb.Incremental)", StringComparison.Ordinal)
+                    && connection.Contains(
+                        "Subscribe<SteamFriends.PersonaStateCallback>",
+                        StringComparison.Ordinal
+                    )
+                    && connection.Contains(
+                        "EClientPersonaStateFlag.Presence",
+                        StringComparison.Ordinal
+                    )
+                    && connection.Contains(
+                        "EClientPersonaStateFlag.GameDataBlob",
+                        StringComparison.Ordinal
+                    )
+                    && connection.Contains("Player.GetNicknameList", StringComparison.Ordinal)
+                    && connection.Contains(
+                        "Player.GetFriendsGameplayInfo",
+                        StringComparison.Ordinal
+                    )
+                    && connection.Contains(
+                        "SetPersonaState(EPersonaState.Online)",
+                        StringComparison.Ordinal
+                    )
+                    && bridge.Contains("SetInvitePresenceOnline();", StringComparison.Ordinal)
+                    && connection.Contains(
+                        "GetAuthenticatedPersonaName(CancellationToken cancellationToken)",
+                        StringComparison.Ordinal
+                    )
+                    && connection.Contains(
+                        "_steamFriends.GetPersonaName()",
+                        StringComparison.Ordinal
+                    )
+                    && bridge.Contains(
+                        "GetAuthenticatedPersonaNameAsync()",
+                        StringComparison.Ordinal
+                    )
+                    && connection.Contains(
+                        "SteamInviteFriendListPolicy.IdentityKey",
+                        StringComparison.Ordinal
+                    )
+                    && connection.Contains(
+                        "_friendsReadyGate.Wait(TimeSpan.FromSeconds(5), cancellationToken)",
+                        StringComparison.Ordinal
+                    )
+                    && connection.Contains(
+                        "SteamInviteFriendListPolicy.MaxSearchableFriends",
+                        StringComparison.Ordinal
+                    )
+                    && connection.Contains(
+                        "for (int index = 0; index < count; index++)",
+                        StringComparison.Ordinal
+                    )
+                    && !connection.Contains(
+                        "friendIds.Count < maxFriends",
+                        StringComparison.Ordinal
+                    )
+                    && connection.Contains("UnicodeCategory.Format", StringComparison.Ordinal)
+                    && !bridge.Contains("Task.Delay(500", StringComparison.Ordinal)
+                    && connection.IndexOf("_connectedGate.Set();", StringComparison.Ordinal)
+                        < connection.IndexOf("lock (_stateLock)", StringComparison.Ordinal),
+                "friend readiness or connection disposal regressed to guessed delays or a connect-timeout race"
+            );
+            Assert(
+                coordinator.Contains("SteamInviteListenerStatus", StringComparison.Ordinal)
+                    && coordinator.Contains(
+                        "ShowListenerStatus(generation, bridge, personaName)",
+                        StringComparison.Ordinal
+                    )
+                    && coordinator.Contains("listenerStatus.QueueFree();", StringComparison.Ordinal)
+                    && dialogs.Contains(
+                        "Steam invites active as {personaName}",
+                        StringComparison.Ordinal
+                    )
+                    && dialogs.Contains(
+                        "TextProvenance.LauncherTemplateWithExternalContent",
+                        StringComparison.Ordinal
+                    )
+                    && dialogs.Contains(
+                        "MouseFilter = MouseFilterEnum.Ignore",
+                        StringComparison.Ordinal
+                    )
+                    && !coordinator.Contains("SavedAccountName}", StringComparison.Ordinal)
+                    && !bridge.Contains("AuthenticatedSteamId.ToString", StringComparison.Ordinal),
+                "join-listener identity UI can expose the wrong identity, survive teardown, or block input"
+            );
+            Assert(
+                dialogs.Contains("tree.ProcessFrame += Drain;", StringComparison.Ordinal)
+                    && dialogs.Contains(
+                        "GetTree().ProcessFrame -= Drain;",
+                        StringComparison.Ordinal
+                    )
+                    && !dialogs.Contains("public override void _Process", StringComparison.Ordinal),
+                "Steam invite async results rely on an embedded Node virtual that is not device-reliable"
+            );
+            Assert(
+                dialogs.Contains("Search Steam name or nickname", StringComparison.Ordinal)
+                    && dialogs.Contains("Show offline friends", StringComparison.Ordinal)
+                    && dialogs.Contains("ButtonPressed = false", StringComparison.Ordinal)
+                    && dialogs.Contains(
+                        "SteamInviteFriendListPolicy.Matches",
+                        StringComparison.Ordinal
+                    )
+                    && dialogs.Contains(
+                        "SteamInviteFriendListPolicy.IsVisible",
+                        StringComparison.Ordinal
+                    )
+                    && dialogs.Contains(
+                        "_showOffline.ButtonPressed,\n                    _search.Text",
+                        StringComparison.Ordinal
+                    )
+                    && dialogs.Contains(
+                        "SteamInviteFriendListPolicy.Rank",
+                        StringComparison.Ordinal
+                    )
+                    && dialogs.Contains(
+                        "SteamInviteFriendListPolicy.RenderWindow(matching)",
+                        StringComparison.Ordinal
+                    )
+                    && dialogs.Contains(
+                        "Showing the first {visible.Count} matches",
+                        StringComparison.Ordinal
+                    )
+                    && dialogs.Contains("friend.Nickname", StringComparison.Ordinal)
+                    && dialogs.Contains("friend.PersonaName", StringComparison.Ordinal)
+                    && dialogs.Contains(
+                        "RECENTLY PLAYED SLAY THE SPIRE 2",
+                        StringComparison.Ordinal
+                    )
+                    && !dialogs.Contains("RECENTLY PLAYED TOGETHER", StringComparison.Ordinal),
+                "friend picker lost search, offline-default, nickname display, rank, or truthful recent-play copy"
+            );
+            Assert(
+                dialogs.Contains("This is not Steam Relay", StringComparison.Ordinal)
+                    && dialogs.Contains("这不是 Steam Relay", StringComparison.Ordinal)
+                    && dialogs.Contains("Steam Relay가 아니며", StringComparison.Ordinal)
+                    && dialogs.Contains(
+                        "TextProvenance.LauncherTemplateWithExternalContent",
+                        StringComparison.Ordinal
+                    )
+                    && dialogs.Contains("Math.Min(", StringComparison.Ordinal)
+                    && dialogs.Contains(
+                        "TouchScroll.Attach(endpointScroll);",
+                        StringComparison.Ordinal
+                    )
+                    && !coordinator.Contains("ConfigFile", StringComparison.Ordinal)
+                    && !coordinator.Contains("File.Write", StringComparison.Ordinal)
+                    && !coordinator.Contains("{friendSteamId}", StringComparison.Ordinal)
+                    && !coordinator.Contains("{endpoint}", StringComparison.Ordinal),
+                "invite UI mislabeled relay behavior, lost trilingual/external-content handling, or persisted/logged private values"
+            );
+        }
+    );
+
     Run(
         "completed Workshop installs clear stale update badges",
         () =>
@@ -126,7 +1485,7 @@ try
     );
 
     Run(
-        "Mono-invalid mod IL is attributed and quarantined without rewriting third-party DLLs",
+        "Mono-invalid mod IL is attributed, isolated, and safely auto-disabled",
         () =>
         {
             var repository = FindRepositoryRoot();
@@ -154,6 +1513,9 @@ try
                     "GodotApp.java"
                 )
             );
+            var autoDisabler = File.ReadAllText(
+                Path.Combine(repository, "src", "STS2Mobile", "Modding", "ModAutoDisabler.cs")
+            );
             Assert(
                 loaderPatch.Contains(
                     "nameof(CallModInitializerTranspiler)",
@@ -171,13 +1533,77 @@ try
                         "ModAssemblyRegistry.IsModAssembly",
                         StringComparison.Ordinal
                     )
+                    && loaderPatch.Contains("TryDisableForFutureLaunch", StringComparison.Ordinal)
+                    && autoDisabler.Contains("ModStasher.Disable(info)", StringComparison.Ordinal)
+                    && autoDisabler.Contains(
+                        "The owning enabled mod folder could not be resolved uniquely.",
+                        StringComparison.Ordinal
+                    )
                     && !compatibility.Contains("LoadFromStream", StringComparison.Ordinal)
                     && android.Contains(
                         "showModRuntimeCompatibilityNotice",
                         StringComparison.Ordinal
                     )
                     && !android.Contains("sts2_mod_compat", StringComparison.Ordinal),
-                "Mono-invalid mod quarantine changed DLL bytes or lost the initializer boundary"
+                "Mono-invalid mod handling lost attribution, fail-closed ownership, or byte preservation"
+            );
+
+            var candidates = new[]
+            {
+                new ModAutoDisableCandidate("broken.mod", "/mods/broken", true),
+                new ModAutoDisableCandidate("healthy.mod", "/mods/healthy", true),
+            };
+            Assert(
+                ModAutoDisablePolicy.SelectTopLevelDirectory("broken.mod", "", "/mods", candidates)
+                    == "/mods/broken",
+                "a unique exact manifest id should resolve when an assembly was byte-loaded"
+            );
+            Assert(
+                ModAutoDisablePolicy.SelectTopLevelDirectory(
+                    "broken.mod",
+                    "/mods/broken/bin/broken.dll",
+                    "/mods",
+                    candidates
+                ) == "/mods/broken",
+                "an assembly inside the unique owning folder should resolve"
+            );
+            Assert(
+                ModAutoDisablePolicy.SelectTopLevelDirectory(
+                    "broken.mod",
+                    "/mods/healthy/broken.dll",
+                    "/mods",
+                    candidates
+                ) == null,
+                "a known assembly/manifest folder mismatch must fail closed"
+            );
+            Assert(
+                ModAutoDisablePolicy.SelectTopLevelDirectory(
+                    "broken.mod",
+                    "",
+                    "/mods",
+                    candidates.Append(
+                        new ModAutoDisableCandidate("broken.mod", "/mods/duplicate", true)
+                    )
+                ) == null,
+                "duplicate ids in different folders must never pick a victim"
+            );
+            Assert(
+                ModAutoDisablePolicy.SelectTopLevelDirectory(
+                    "broken.mod",
+                    "",
+                    "/mods",
+                    new[] { new ModAutoDisableCandidate("broken.mod", "/mods/../outside", true) }
+                ) == null,
+                "a traversal candidate must never cross the enabled-mod root"
+            );
+            Assert(
+                ModAutoDisablePolicy.SelectTopLevelDirectory(
+                    "broken.mod",
+                    "",
+                    "/mods",
+                    new[] { new ModAutoDisableCandidate("broken.mod", "/mods/bundle", false) }
+                ) == null,
+                "a shared top-level folder must remain a manual user decision"
             );
         }
     );
@@ -597,9 +2023,7 @@ try
             var view = File.ReadAllText(
                 Path.Combine(repository, "src", "STS2Mobile", "Launcher", "LauncherView.cs")
             );
-            var registry = File.ReadAllText(
-                Path.Combine(components, "LocalizedTextRegistry.cs")
-            );
+            var registry = File.ReadAllText(Path.Combine(components, "LocalizedTextRegistry.cs"));
 
             Assert(
                 selector.Contains("class LanguageSelector", StringComparison.Ordinal)
@@ -3111,6 +4535,25 @@ static int CountOccurrences(string text, string value)
         offset += value.Length;
     }
     return count;
+}
+
+static Dictionary<string, string> CreateSteamInviteMetadataFixture(
+    long expiresAtUnixSeconds,
+    string nonce,
+    string endpoints = "sts2lan:v1:192.168.10.8:33771"
+)
+{
+    return new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        [SteamLobbyInviteMetadata.SchemaKey] = SteamLobbyInviteMetadata.SchemaV1,
+        [SteamLobbyInviteMetadata.AppIdKey] = SteamLobbyInviteMetadata.GameAppId,
+        [SteamLobbyInviteMetadata.TransportKey] = SteamLobbyInviteMetadata.EnetDirectTransport,
+        [SteamLobbyInviteMetadata.LauncherBuildKey] = "0.4.8",
+        [SteamLobbyInviteMetadata.GameBuildKey] = "public-107.1",
+        [SteamLobbyInviteMetadata.EndpointsKey] = endpoints,
+        [SteamLobbyInviteMetadata.ExpiresKey] = expiresAtUnixSeconds.ToString(),
+        [SteamLobbyInviteMetadata.NonceKey] = nonce,
+    };
 }
 
 static string FindRepositoryRoot()

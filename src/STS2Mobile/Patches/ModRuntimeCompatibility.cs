@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Reflection;
 using STS2Mobile.Launcher;
+using STS2Mobile.Modding;
 
 namespace STS2Mobile.Patches;
 
@@ -17,6 +18,7 @@ public static class ModRuntimeCompatibility
     private static readonly object _lock = new();
     private static readonly HashSet<string> _observed = new(StringComparer.Ordinal);
     private static readonly HashSet<Assembly> _incompatibleAssemblies = new();
+    private static readonly Dictionary<Assembly, bool?> _autoDisableOutcomes = new();
 
     public static object InvokeInitializer(MethodBase method, object target, object[] parameters)
     {
@@ -56,12 +58,10 @@ public static class ModRuntimeCompatibility
 
             PatchHelper.Log(
                 $"[ModCompat] '{assemblyName}' contains code rejected by the bundled "
-                    + $"Mono Android runtime ({rejectedType.FullName}). The launcher left the "
-                    + "DLL unchanged; use a Mono-compatible/unobfuscated mod build."
+                    + $"Mono Android runtime ({rejectedType.FullName}). The launcher will keep "
+                    + "the DLL bytes unchanged and disable its owning mod folder when ownership "
+                    + "is resolved unambiguously."
             );
-            LauncherModel
-                .GetGodotApp()
-                ?.Call("showModRuntimeCompatibilityNotice", SanitizeDisplayName(assemblyName));
         }
         catch (Exception ex)
         {
@@ -77,6 +77,79 @@ public static class ModRuntimeCompatibility
             return false;
         lock (_lock)
             return _incompatibleAssemblies.Contains(assembly);
+    }
+
+    // Called from the current Mod/TryLoadMod boundary, where the manifest id and
+    // exact rejected assembly are both available. Only the already-proven
+    // InvalidProgramException case reaches this persistent, reversible action.
+    public static bool TryDisableForFutureLaunch(string modId, Assembly assembly)
+    {
+        if (assembly == null || !IsIncompatible(assembly))
+            return false;
+
+        lock (_lock)
+        {
+            if (_autoDisableOutcomes.TryGetValue(assembly, out var prior))
+                return prior == true;
+            _autoDisableOutcomes[assembly] = null;
+        }
+
+        string assemblyLocation = null;
+        try
+        {
+            assemblyLocation = assembly.Location;
+        }
+        catch { }
+
+        ModAutoDisableResult result;
+        try
+        {
+            result = ModAutoDisabler.TryDisable(modId, assemblyLocation);
+        }
+        catch (Exception ex)
+        {
+            result = ModAutoDisableResult.Failed(
+                $"Unexpected auto-disable failure ({ex.GetType().Name})."
+            );
+        }
+        lock (_lock)
+            _autoDisableOutcomes[assembly] = result.Disabled;
+
+        string assemblyName = null;
+        try
+        {
+            assemblyName = assembly.GetName().Name;
+        }
+        catch { }
+        var displayName = SanitizeDisplayName(
+            string.IsNullOrWhiteSpace(modId) ? assemblyName : modId
+        );
+        if (result.Disabled)
+        {
+            PatchHelper.Log(
+                $"[ModCompat] Automatically disabled incompatible mod '{displayName}' for "
+                    + "future launches; DLL bytes were not modified"
+            );
+        }
+        else
+        {
+            PatchHelper.Log(
+                $"[ModCompat] Could not auto-disable incompatible mod '{displayName}': "
+                    + (result.Error ?? "unknown boundary failure")
+            );
+        }
+
+        try
+        {
+            LauncherModel
+                .GetGodotApp()
+                ?.Call("showModRuntimeCompatibilityNotice", displayName, result.Disabled);
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log($"[ModCompat] Compatibility notice degraded: {ex.GetType().Name}");
+        }
+        return result.Disabled;
     }
 
     private static bool TryFindRejectedType(

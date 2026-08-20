@@ -20,4 +20,5 @@ public enum FastPathResult
     ShowLogin,
     AutoConnect,
     ReadyToLaunch,
+    AccountDataUnavailable,
 }

@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -10,7 +11,9 @@ using System.Text;
 using System.Threading;
 using Godot;
 using HarmonyLib;
+using STS2Mobile.Launcher;
 using STS2Mobile.Launcher.Components;
+using STS2Mobile.Multiplayer;
 
 namespace STS2Mobile.Patches;
 
@@ -34,6 +37,12 @@ public static class LanMultiplayerPatcher
     private static MethodInfo _setTextAutoSize;
     private static PropertyInfo _activeScreenContextInstance;
     private static MethodInfo _activeScreenContextUpdate;
+    private static FieldInfo _inviteLobbyField;
+    private static FieldInfo _inviteContainerField;
+    private static PropertyInfo _lobbyNetServiceProperty;
+    private static PropertyInfo _netServicePlatformProperty;
+    private static PropertyInfo _lobbyPlayersProperty;
+    private static PropertyInfo _lobbyMaxPlayersProperty;
 
     private static LanBeacon _beacon;
     private static LanDiscovery _discovery;
@@ -67,6 +76,15 @@ public static class LanMultiplayerPatcher
             );
             var activeScreenCtxType = sts2Asm.GetType(
                 "MegaCrit.Sts2.Core.Nodes.Screens.ScreenContext.ActiveScreenContext"
+            );
+            var inviteButtonType = sts2Asm.GetType(
+                "MegaCrit.Sts2.Core.Nodes.Multiplayer.NInvitePlayersButton"
+            );
+            var startRunLobbyType = sts2Asm.GetType(
+                "MegaCrit.Sts2.Core.Multiplayer.Game.Lobby.StartRunLobby"
+            );
+            var netGameServiceType = sts2Asm.GetType(
+                "MegaCrit.Sts2.Core.Multiplayer.Game.INetGameService"
             );
 
             if (joinScreenType == null || joinButtonType == null || eNetConnType == null)
@@ -107,6 +125,18 @@ public static class LanMultiplayerPatcher
                 "Update",
                 BindingFlags.Public | BindingFlags.Instance
             );
+
+            // Reuse the game's existing lobby Invite button only for its ENet
+            // host path. Native Steam lobbies keep their original overlay flow.
+            if (inviteButtonType != null && startRunLobbyType != null && netGameServiceType != null)
+            {
+                _inviteLobbyField = AccessTools.Field(inviteButtonType, "_startRunLobby");
+                _inviteContainerField = AccessTools.Field(inviteButtonType, "_container");
+                _lobbyNetServiceProperty = AccessTools.Property(startRunLobbyType, "NetService");
+                _netServicePlatformProperty = AccessTools.Property(netGameServiceType, "Platform");
+                _lobbyPlayersProperty = AccessTools.Property(startRunLobbyType, "Players");
+                _lobbyMaxPlayersProperty = AccessTools.Property(startRunLobbyType, "MaxPlayers");
+            }
 
             if (
                 _joinFriendButtonCreate == null
@@ -204,6 +234,46 @@ public static class LanMultiplayerPatcher
                 }
             }
 
+            if (inviteButtonType != null)
+            {
+                var updateVisibility = AccessTools.Method(inviteButtonType, "UpdateVisibility");
+                var onRelease = AccessTools.Method(inviteButtonType, "OnRelease");
+                if (
+                    updateVisibility != null
+                    && onRelease != null
+                    && _inviteLobbyField != null
+                    && _inviteContainerField != null
+                    && _lobbyNetServiceProperty != null
+                    && _netServicePlatformProperty != null
+                    && _lobbyPlayersProperty != null
+                    && _lobbyMaxPlayersProperty != null
+                )
+                {
+                    harmony.Patch(
+                        updateVisibility,
+                        postfix: new HarmonyMethod(
+                            patcherType.GetMethod(
+                                nameof(InviteButtonUpdateVisibilityPostfix),
+                                BindingFlags.Public | BindingFlags.Static
+                            )
+                        )
+                    );
+                    harmony.Patch(
+                        onRelease,
+                        prefix: new HarmonyMethod(
+                            patcherType.GetMethod(
+                                nameof(InviteButtonOnReleasePrefix),
+                                BindingFlags.Public | BindingFlags.Static
+                            )
+                        )
+                    );
+                }
+                else
+                {
+                    PatchHelper.Log("LAN invite: game button contract unavailable; share skipped");
+                }
+            }
+
             // Replace debug player names with numbered player names.
             var nullStrategyType = sts2Asm.GetType(
                 "MegaCrit.Sts2.Core.Platform.Null.NullPlatformUtilStrategy"
@@ -228,7 +298,7 @@ public static class LanMultiplayerPatcher
                 }
             }
 
-            PatchHelper.Log("LAN multiplayer patches applied (6)");
+            PatchHelper.Log("LAN multiplayer patches applied (8)");
         }
         catch (Exception ex)
         {
@@ -243,13 +313,23 @@ public static class LanMultiplayerPatcher
             var screen = (Node)__instance;
 
             var titleLabel = screen.GetNode("TitleLabel");
-            _setTextAutoSize?.Invoke(titleLabel, new object[] { "JOIN LAN GAME" });
+            _setTextAutoSize?.Invoke(
+                titleLabel,
+                new object[] { Loc.Select("LAN 게임 참가", "JOIN LAN GAME", "加入 LAN 游戏") }
+            );
 
             var noFriendsLabel = _noFriendsLabelField?.GetValue(__instance);
             if (noFriendsLabel != null)
                 _setTextAutoSize?.Invoke(
                     noFriendsLabel,
-                    new object[] { "Searching for LAN hosts..." }
+                    new object[]
+                    {
+                        Loc.Select(
+                            "LAN 호스트 검색 중...",
+                            "Searching for LAN hosts...",
+                            "正在搜索 LAN 主机…"
+                        ),
+                    }
                 );
 
             // Manual IP entry row at the bottom of the screen.
@@ -258,14 +338,18 @@ public static class LanMultiplayerPatcher
             ipContainer.AddThemeConstantOverride("separation", 10);
 
             var ipEdit = new LineEdit();
-            ipEdit.PlaceholderText = Loc.Authored("Enter host IP address");
+            ipEdit.PlaceholderText = Loc.Select(
+                "호스트 IPv4 주소 또는 초대 코드 입력",
+                "Enter host IPv4 address or invite code",
+                "输入主机 IPv4 地址或邀请代码"
+            );
             ipEdit.Text = LoadLastIp();
             ipEdit.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
             ipEdit.AddThemeFontSizeOverride("font_size", 28);
             _ipLineEdit = ipEdit;
 
             var joinBtn = new Button();
-            joinBtn.Text = Loc.Authored("JOIN");
+            joinBtn.Text = Loc.Select("참가", "JOIN", "加入");
             joinBtn.CustomMinimumSize = new Vector2(100, 0);
             joinBtn.AddThemeFontSizeOverride("font_size", 28);
 
@@ -330,6 +414,7 @@ public static class LanMultiplayerPatcher
             _discovery?.Stop();
             _discovery = new LanDiscovery();
             _discovery.Start(__instance, buttonContainer);
+            SteamInviteCoordinator.OnJoinScreenOpened((Node)__instance, JoinViaIp);
         }
         catch (Exception ex)
         {
@@ -345,6 +430,7 @@ public static class LanMultiplayerPatcher
             _joinInProgress = false;
             _discovery?.Stop();
             _discovery = null;
+            SteamInviteCoordinator.OnJoinScreenClosed();
         }
         catch (Exception ex)
         {
@@ -360,6 +446,8 @@ public static class LanMultiplayerPatcher
                 return;
 
             ResetSlotMap();
+            DismissLanInviteChooser();
+            SteamInviteCoordinator.OnHostStarted();
             _beacon?.Stop();
             _beacon = new LanBeacon();
             _beacon.Start();
@@ -375,12 +463,170 @@ public static class LanMultiplayerPatcher
         try
         {
             ResetSlotMap();
+            DismissLanInviteChooser();
+            SteamInviteCoordinator.OnHostDisconnected();
             _beacon?.Stop();
             _beacon = null;
         }
         catch (Exception ex)
         {
             PatchHelper.Log($"DisconnectPostfix error: {ex}");
+        }
+    }
+
+    public static void InviteButtonUpdateVisibilityPostfix(object __instance)
+    {
+        try
+        {
+            if (!TryGetLanInviteState(__instance, out bool hasSpace))
+                return;
+            if (_inviteContainerField?.GetValue(__instance) is Control container)
+                container.Visible = _beacon != null && hasSpace;
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log($"LAN invite visibility degraded: {ex.GetType().Name}");
+        }
+    }
+
+    public static bool InviteButtonOnReleasePrefix(object __instance)
+    {
+        try
+        {
+            if (!TryGetLanInviteState(__instance, out _) || _beacon == null)
+                return true;
+            var endpoints = GetShareableEndpoints();
+            if (endpoints.Count == 0 || __instance is not Node owner)
+            {
+                ShowLanInviteChooser();
+                return false;
+            }
+            SteamInviteCoordinator.ShowInviteMethod(owner, endpoints, ShowLanInviteChooser);
+            return false;
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log($"LAN invite action degraded: {ex.GetType().Name}");
+            return true;
+        }
+    }
+
+    private static bool TryGetLanInviteState(object inviteButton, out bool hasSpace)
+    {
+        hasSpace = false;
+        var lobby = _inviteLobbyField?.GetValue(inviteButton);
+        if (lobby == null)
+            return false;
+        var netService = _lobbyNetServiceProperty?.GetValue(lobby);
+        var platform =
+            netService == null
+                ? null
+                : _netServicePlatformProperty?.GetValue(netService)?.ToString();
+        if (!string.Equals(platform, "None", StringComparison.Ordinal))
+            return false;
+
+        var players = _lobbyPlayersProperty?.GetValue(lobby);
+        var maxValue = _lobbyMaxPlayersProperty?.GetValue(lobby);
+        if (
+            !TryReadCollectionCount(players, out int count)
+            || !TryReadInt(maxValue, out int maxPlayers)
+        )
+            return false;
+        hasSpace = count < maxPlayers;
+        return true;
+    }
+
+    private static void ShowLanInviteChooser()
+    {
+        var endpoints = GetShareableEndpoints();
+        if (endpoints.Count == 0)
+        {
+            ShowLanMessage(
+                Loc.Select(
+                    "공유할 수 있는 IPv4 주소가 없습니다. Wi-Fi 또는 VPN 연결을 확인하세요.",
+                    "No shareable IPv4 address was found. Check Wi-Fi or VPN connectivity.",
+                    "未找到可分享的 IPv4 地址。请检查 Wi-Fi 或 VPN 连接。"
+                )
+            );
+            return;
+        }
+
+        var payload = string.Join("\n", endpoints.Select(LanInviteCode.Format));
+        var app = LauncherModel.GetGodotApp();
+        if (app == null)
+        {
+            ShowLanMessage(
+                Loc.Select(
+                    "Android 공유 창을 열 수 없습니다.",
+                    "The Android share dialog is unavailable.",
+                    "无法打开 Android 分享窗口。"
+                )
+            );
+            return;
+        }
+        app.Call("showLanInviteChooser", payload);
+    }
+
+    private static IReadOnlyList<LanJoinEndpoint> GetShareableEndpoints() =>
+        LanInviteCode.SelectShareableEndpoints(
+            GetLocalIpAddresses(),
+            preferredAddress: GetDefaultRouteLocalIpAddress()
+        );
+
+    private static void ShowLanMessage(string message)
+    {
+        try
+        {
+            LauncherModel.GetGodotApp()?.Call("showLanInviteMessage", message);
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log($"LAN invite message degraded: {ex.GetType().Name}");
+        }
+    }
+
+    private static void DismissLanInviteChooser()
+    {
+        try
+        {
+            LauncherModel.GetGodotApp()?.Call("dismissLanInviteChooser");
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log($"LAN invite teardown degraded: {ex.GetType().Name}");
+        }
+    }
+
+    private static bool TryReadCollectionCount(object value, out int count)
+    {
+        count = 0;
+        if (value == null)
+            return false;
+        if (value is ICollection collection)
+        {
+            count = collection.Count;
+            return count >= 0;
+        }
+        var countValue = value
+            .GetType()
+            .GetProperty("Count", BindingFlags.Public | BindingFlags.Instance)
+            ?.GetValue(value);
+        return TryReadInt(countValue, out count);
+    }
+
+    private static bool TryReadInt(object value, out int result)
+    {
+        result = 0;
+        if (value == null)
+            return false;
+        try
+        {
+            result = Convert.ToInt32(value);
+            return result >= 0;
+        }
+        catch
+        {
+            return false;
         }
     }
 
@@ -568,25 +814,27 @@ public static class LanMultiplayerPatcher
         if (string.IsNullOrEmpty(raw))
             return;
 
-        var (ip, port) = ParseIpPort(raw);
-        SaveLastIp(raw);
-        JoinViaIp(screen, ip, port);
-    }
-
-    private static (string ip, int port) ParseIpPort(string input)
-    {
-        if (input.Contains(':'))
+        if (!LanInviteCode.TryParseJoinInput(raw, out var endpoint, out var error))
         {
-            var parts = input.Split(':');
-            if (
-                parts.Length == 2
-                && int.TryParse(parts[1], out int port)
-                && port > 0
-                && port <= 65535
-            )
-                return (parts[0], port);
+            ShowLanMessage(
+                error == LanInviteParseError.UnsupportedVersion
+                    ? Loc.Select(
+                        "지원하지 않는 초대 코드 버전입니다.",
+                        "This invite-code version is not supported.",
+                        "不支持此邀请代码版本。"
+                    )
+                    : Loc.Select(
+                        "올바른 IPv4 주소, IP:포트 또는 STS2LAN 초대 코드를 입력하세요.",
+                        "Enter a valid IPv4 address, IP:port, or STS2LAN invite code.",
+                        "请输入有效的 IPv4 地址、IP:端口或 STS2LAN 邀请代码。"
+                    )
+            );
+            return;
         }
-        return (input, GamePort);
+        var canonical = endpoint.ToString();
+        _ipLineEdit.Text = canonical;
+        SaveLastIp(canonical);
+        JoinViaIp(screen, endpoint.Address.ToString(), endpoint.Port);
     }
 
     private static void JoinViaIp(object screen, string ip, int port)
@@ -601,12 +849,12 @@ public static class LanMultiplayerPatcher
             var task = _joinGameAsyncMethod.Invoke(screen, new object[] { connInit });
             _taskHelperRunSafely?.Invoke(null, new object[] { task });
 
-            PatchHelper.Log($"Joining LAN game at {ip}:{port} as netId={netId}");
+            PatchHelper.Log("Joining LAN game via validated direct endpoint");
         }
         catch (Exception ex)
         {
             _joinInProgress = false;
-            PatchHelper.Log($"JoinViaIp error: {ex}");
+            PatchHelper.Log($"JoinViaIp error: {ex.GetType().Name}");
         }
     }
 
@@ -655,9 +903,9 @@ public static class LanMultiplayerPatcher
         }
     }
 
-    private static HashSet<string> GetLocalIps()
+    private static List<IPAddress> GetLocalIpAddresses()
     {
-        var ips = new HashSet<string>();
+        var ips = new List<IPAddress>();
         try
         {
             foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
@@ -667,13 +915,37 @@ public static class LanMultiplayerPatcher
                 foreach (var addr in ni.GetIPProperties().UnicastAddresses)
                 {
                     if (addr.Address.AddressFamily == AddressFamily.InterNetwork)
-                        ips.Add(addr.Address.ToString());
+                        ips.Add(addr.Address);
                 }
             }
         }
         catch { }
         return ips;
     }
+
+    // UDP connect performs route selection without sending a datagram. This
+    // gives the chooser a portable preference for the active Wi-Fi/VPN path
+    // while retaining every validated address as an explicit alternative.
+    private static IPAddress GetDefaultRouteLocalIpAddress()
+    {
+        try
+        {
+            using var socket = new Socket(
+                AddressFamily.InterNetwork,
+                SocketType.Dgram,
+                ProtocolType.Udp
+            );
+            socket.Connect(new IPEndPoint(IPAddress.Parse("192.0.2.1"), 9));
+            return (socket.LocalEndPoint as IPEndPoint)?.Address;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static HashSet<string> GetLocalIps() =>
+        GetLocalIpAddresses().Select(address => address.ToString()).ToHashSet();
 
     private class LanBeacon
     {
@@ -900,7 +1172,7 @@ public static class LanMultiplayerPatcher
                 }
                 catch (Exception ex)
                 {
-                    PatchHelper.Log($"Text override failed for {ip}: {ex.Message}");
+                    PatchHelper.Log($"LAN host label update failed: {ex.GetType().Name}");
                 }
 
                 var capturedIp = ip;
@@ -915,11 +1187,11 @@ public static class LanMultiplayerPatcher
                 );
 
                 _hostButtons[ip] = button;
-                PatchHelper.Log($"Discovered LAN host: {hostname} @ {ip}:{port}");
+                PatchHelper.Log("Discovered LAN host");
             }
             catch (Exception ex)
             {
-                PatchHelper.Log($"AddHostButton error: {ex.Message}");
+                PatchHelper.Log($"AddHostButton error: {ex.GetType().Name}");
             }
         }
 

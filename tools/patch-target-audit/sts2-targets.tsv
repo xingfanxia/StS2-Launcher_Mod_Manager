@@ -15,6 +15,7 @@ required	method	MegaCrit.Sts2.Core.Modding.ModManager	ReadSteamMods	bare	-
 required	method	MegaCrit.Sts2.Core.Modding.ModManager	ReadModManifest	bare	-
 required	method	MegaCrit.Sts2.Core.Platform.Null.NullPlatformUtilStrategy	GetRawLanguage	bare	-
 required	method	MegaCrit.Sts2.Core.Saves.GodotFileIo	CreateDirectory	bare	-
+required	method	MegaCrit.Sts2.Core.Saves.GodotFileIo	GetFullPath	bare	-
 required	method	MegaCrit.Sts2.Core.Debug.OsDebugInfo	LogSystemInfo	bare	-
 required	property	MegaCrit.Sts2.Core.Saves.PrefsSave	UploadData	-	-
 required	method	MegaCrit.Sts2.Core.Debug.SentryService	Initialize	bare	-
@@ -66,6 +67,14 @@ optional	method	MegaCrit.Sts2.Core.Nodes.Screens.MainMenu.NJoinFriendScreen	Join
 optional	method	MegaCrit.Sts2.Core.Nodes.Screens.MainMenu.NJoinFriendButton	Create	bare	-
 optional	method	MegaCrit.Sts2.Core.Multiplayer.NetHostGameService	StartENetHost	bare	-
 optional	method	MegaCrit.Sts2.Core.Multiplayer.NetHostGameService	Disconnect	bare	-
+optional	method	MegaCrit.Sts2.Core.Nodes.Multiplayer.NInvitePlayersButton	UpdateVisibility	bare	-
+optional	method	MegaCrit.Sts2.Core.Nodes.Multiplayer.NInvitePlayersButton	OnRelease	bare	-
+optional	field	MegaCrit.Sts2.Core.Nodes.Multiplayer.NInvitePlayersButton	_startRunLobby	-	-
+optional	field	MegaCrit.Sts2.Core.Nodes.Multiplayer.NInvitePlayersButton	_container	-	-
+optional	property	MegaCrit.Sts2.Core.Multiplayer.Game.Lobby.StartRunLobby	NetService	-	-
+optional	property	MegaCrit.Sts2.Core.Multiplayer.Game.Lobby.StartRunLobby	Players	-	-
+optional	property	MegaCrit.Sts2.Core.Multiplayer.Game.Lobby.StartRunLobby	MaxPlayers	-	-
+optional	property	MegaCrit.Sts2.Core.Multiplayer.Game.INetGameService	Platform	-	-
 optional	method	MegaCrit.Sts2.Core.Platform.Null.NullPlatformUtilStrategy	GetPlayerName	bare	-
 optional	method	MegaCrit.Sts2.Core.Localization.LocString	.ctor	2	-
 optional	method	MegaCrit.Sts2.Core.Localization.LocString	GetFormattedText	0	-

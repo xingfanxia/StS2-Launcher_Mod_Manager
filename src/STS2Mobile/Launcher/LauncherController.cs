@@ -62,10 +62,7 @@ public class LauncherController
         {
             if (msg.StartsWith("[Cloud]"))
                 _runOnMainThread(() =>
-                    _view.AppendLog(
-                        msg,
-                        TextProvenance.LauncherDiagnosticWithExternalContent
-                    )
+                    _view.AppendLog(msg, TextProvenance.LauncherDiagnosticWithExternalContent)
                 );
         };
         _model.CodeNeeded += wasIncorrect =>
@@ -168,6 +165,7 @@ public class LauncherController
             });
 
         _view.Login.LoginRequested += OnLoginPressed;
+        _view.Login.AccountSwitchCancelled += OnAccountSwitchCancelled;
         _view.Code.CodeSubmitted += OnCodeSubmitPressed;
         _view.Download.DownloadRequested += OnDownloadPressed;
         _view.Actions.LaunchPressed += OnLaunchPressed;
@@ -178,6 +176,7 @@ public class LauncherController
         _view.Actions.CloudPullPressed += OnCloudPullPressed;
         _view.Actions.CheckGameUpdatePressed += OnCheckGameUpdatePressed;
         _view.Actions.CheckLauncherUpdatePressed += OnCheckLauncherUpdatePressed;
+        _view.Actions.SwitchAccountPressed += OnSwitchAccountPressed;
         _view.ModManagerButton.Pressed += OnModManagerPressed;
         _view.ModsButton.Pressed += OnModsPressed;
         _view.ModManager.BackPressed += OnModManagerBackPressed;
@@ -197,10 +196,15 @@ public class LauncherController
         // particular is needed for ModLoaderPatches to find user-installed mods,
         // independently of the Local Backup toggle. Internally a no-op when
         // permission isn't granted yet.
-        AppPaths.EnsureExternalDirectories();
-        _view.Actions.SetCloudSyncChecked(LauncherModel.LoadCloudSyncPref());
-
         var result = _model.StartSession();
+        // AccountDataIsolation becomes active inside StartSession. Create/adopt
+        // external backup directories only after that boundary is established,
+        // otherwise a cold upgrade would keep writing new backups into the
+        // legacy shared Saves/manual tree until the first button press.
+        AppPaths.EnsureExternalDirectories();
+        var cloudSyncEnabled = LauncherModel.LoadCloudSyncPref();
+        LauncherPatches.CloudSyncEnabled = cloudSyncEnabled;
+        _view.Actions.SetCloudSyncChecked(cloudSyncEnabled);
         HandleFastPath(result);
         MaybePromptStoragePermission();
     }
@@ -260,6 +264,17 @@ public class LauncherController
             case FastPathResult.ShowLogin:
                 ShowLoginStage("Enter your Steam credentials");
                 break;
+
+            case FastPathResult.AccountDataUnavailable:
+                _view.SetStatus(
+                    Loc.Select(
+                        "저장된 Steam 계정 데이터를 열 수 없습니다. 파일은 보존되었습니다. 다시 시도하거나 앱을 재시작하세요.",
+                        "Saved Steam account data is unavailable. Your files were preserved; retry or restart the launcher.",
+                        "无法打开已保存的 Steam 账号数据。文件均已保留；请重试或重新启动 launcher。"
+                    )
+                );
+                _view.Actions.ShowRetry();
+                break;
         }
     }
 
@@ -267,6 +282,7 @@ public class LauncherController
     {
         _view.SetStatus(status);
         _view.Login.Visible = true;
+        _view.Login.SetAccountSwitchMode(_model.AccountSwitchPending);
         _view.Login.SetDisabled(false);
     }
 
@@ -532,6 +548,88 @@ public class LauncherController
         _view.Login.ClearPassword();
         await _model.LoginAsync(username, password);
     }
+
+    private void OnSwitchAccountPressed()
+    {
+        if (
+            _cloudOpInProgress
+            || _checkingForGameUpdate
+            || _checkingForLauncherUpdate
+            || _view.ModManager.Visible
+        )
+            return;
+
+        _view.ShowSteamAccountPicker(
+            _model.StoredAccounts,
+            onSelected: steamId =>
+                _view.ShowConfirmation(
+                    "Steam 계정을 전환할까요?\n\n대기 중인 클라우드 쓰기를 먼저 마친 뒤 앱을 재시작합니다. "
+                        + "게임, 세이브, Workshop/mod, 로컬 백업 및 클라우드 데이터는 삭제하지 않습니다.",
+                    onConfirmed: () => SwitchToStoredAccount(steamId),
+                    onCancelled: null,
+                    okLabel: "전환",
+                    cancelLabel: "취소"
+                ),
+            onAddAccount: BeginAddAccount,
+            onCancelled: null
+        );
+    }
+
+    private async void SwitchToStoredAccount(ulong steamId)
+    {
+        if (_cloudOpInProgress)
+            return;
+        _cloudOpInProgress = true;
+        _view.SetCloudOpBusy(true);
+        _view.SetStatus("계정 전환 전 클라우드 쓰기를 마무리하는 중...");
+        bool switched;
+        try
+        {
+            switched = await _model.ActivateStoredAccountAsync(steamId);
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log($"[AccountSwitch] Stored-account switch failed: {ex.GetType().Name}");
+            switched = false;
+        }
+        if (!switched)
+        {
+            _cloudOpInProgress = false;
+            _view.SetCloudOpBusy(false);
+            _view.SetStatus("계정 전환을 완료하지 못했습니다. 현재 계정은 변경되지 않았습니다.");
+        }
+    }
+
+    private async void BeginAddAccount()
+    {
+        if (_cloudOpInProgress)
+            return;
+        _cloudOpInProgress = true;
+        _view.SetCloudOpBusy(true);
+        _view.SetStatus("계정 추가 전 클라우드 쓰기를 마무리하는 중...");
+        bool ready;
+        try
+        {
+            ready = await _model.BeginAddAccountAsync();
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log($"[AccountSwitch] Add-account setup failed: {ex.GetType().Name}");
+            ready = false;
+        }
+        _cloudOpInProgress = false;
+        _view.SetCloudOpBusy(false);
+        if (!ready)
+        {
+            _view.SetStatus("계정 전환을 시작하지 못했습니다. 현재 계정은 변경되지 않았습니다.");
+            return;
+        }
+
+        _view.HideAllSections();
+        ShowLoginStage("다른 Steam 계정을 추가하려면 로그인하세요");
+    }
+
+    private void OnAccountSwitchCancelled() => _model.CancelAddAccount();
 
     private void OnCodeSubmitPressed(string code)
     {

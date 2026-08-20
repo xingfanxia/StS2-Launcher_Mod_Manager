@@ -6,7 +6,10 @@ using SteamKit2.Authentication;
 
 namespace STS2Mobile.Steam;
 
-public record AuthResult(string AccountName, string RefreshToken, string GuardData);
+public sealed record AuthResult(string AccountName, string RefreshToken, string GuardData)
+{
+    public override string ToString() => nameof(AuthResult);
+}
 
 // Handles one-time interactive Steam login (password + 2FA). Creates a temporary
 // SteamClient for the auth flow, returns credentials, then disposes. Does NOT
@@ -88,7 +91,7 @@ public class SteamAuth : IDisposable
                 );
         }
 
-        Log($"Authenticating as '{username}'...");
+        Log("Authenticating Steam account...");
 
         var authSession = await _client.Authentication.BeginAuthSessionViaCredentialsAsync(
             new AuthSessionDetails
@@ -105,7 +108,7 @@ public class SteamAuth : IDisposable
 
         string newGuardData = pollResponse.NewGuardData ?? guardData;
 
-        Log($"Authentication successful for '{pollResponse.AccountName}'");
+        Log("Steam authentication successful");
 
         return new AuthResult(pollResponse.AccountName, pollResponse.RefreshToken, newGuardData);
     }
@@ -185,7 +188,7 @@ public class SteamAuth : IDisposable
             _auth.Log(
                 previousCodeWasIncorrect
                     ? "Previous email code was incorrect, requesting new code"
-                    : $"Steam Guard email code sent to {email}"
+                    : "Steam Guard email code sent"
             );
 
             if (_auth.CodeProvider == null)

@@ -34,6 +34,24 @@ internal static class SimplifiedChineseLocalization
         ["영어로 전환했습니다."] = "已切换到英语。",
         ["중국어(간체)로 전환했습니다."] = "已切换到简体中文。",
         ["영어로 전환하려면 누르세요."] = "点击切换为英语。",
+        ["Steam 계정 전환"] = "切换 Steam 账号",
+        ["계정 전환 취소"] = "取消账号切换",
+        ["계정마다 세이브와 런처 설정을 따로 보관합니다. 게임 파일과 모드는 공유됩니다."] =
+            "每个账号分别保存存档和启动器设置；游戏文件与 mod 共用。",
+        ["다른 계정 추가"] = "添加其他账号",
+        ["현재"] = "当前",
+        [
+            "Steam 계정을 전환할까요?\n\n대기 중인 클라우드 쓰기를 먼저 마친 뒤 앱을 재시작합니다. 게임, 세이브, Workshop/mod, 로컬 백업 및 클라우드 데이터는 삭제하지 않습니다."
+        ] =
+            "现在切换 Steam 账号吗？\n\n将先完成待处理的云端写入，然后重启应用。不会删除游戏、存档、Workshop/mod、本地备份或云端数据。",
+        ["전환"] = "切换",
+        ["계정 전환 전 클라우드 쓰기를 마무리하는 중..."] = "正在完成云端写入，然后切换账号…",
+        ["계정 전환을 완료하지 못했습니다. 현재 계정은 변경되지 않았습니다."] =
+            "未能完成账号切换，当前账号保持不变。",
+        ["계정 추가 전 클라우드 쓰기를 마무리하는 중..."] = "正在完成云端写入，然后添加账号…",
+        ["계정 전환을 시작하지 못했습니다. 현재 계정은 변경되지 않았습니다."] =
+            "无法开始账号切换，当前账号保持不变。",
+        ["다른 Steam 계정을 추가하려면 로그인하세요"] = "登录以添加其他 Steam 账号",
 
         ["프로필별로 로컬과 Steam Cloud의 진행도를 확인하고 개별적으로 동기화할 수 있습니다."] =
             "可分别查看各个配置档的本地与 Steam Cloud 进度并进行同步。",
@@ -57,8 +75,7 @@ internal static class SimplifiedChineseLocalization
             "云同步已关闭，仅可使用本地功能。",
 
         ["이미지 캐시 정리"] = "清除图像缓存",
-        ["포션 / 카드 / 유물 이미지가 잘못 표시될 때 사용"] =
-            "药水、卡牌或遗物图像显示异常时使用",
+        ["포션 / 카드 / 유물 이미지가 잘못 표시될 때 사용"] = "药水、卡牌或遗物图像显示异常时使用",
         [
             "이미지 인덱스 캐시 정리\n\n포션 / 카드 / 유물 등 이미지가 잘못 표시될 때 사용하세요.\n게임 텍스처 캐시(약 660개) 를 삭제하고 앱을 재시작합니다.\n\n* 다음 실행이 30~60초 더 걸립니다 (재import)\n* 게임을 다시 다운로드하지 않습니다\n* 세이브 / 진행도 / 로그인 정보는 보존됩니다"
         ] =
@@ -70,8 +87,7 @@ internal static class SimplifiedChineseLocalization
         ["세이브 동기화 상태"] = "存档同步状态",
         ["로컬과 Steam Cloud의 진행도가 일치합니다.\n별도 작업이 필요하지 않습니다."] =
             "本地与 Steam Cloud 的进度一致。\n无需其他操作。",
-        ["로컬과 Steam Cloud 모두 진행도 데이터가 없습니다."] =
-            "本地与 Steam Cloud 均无进度数据。",
+        ["로컬과 Steam Cloud 모두 진행도 데이터가 없습니다."] = "本地与 Steam Cloud 均无进度数据。",
         ["세이브 데이터 동기화"] = "同步存档数据",
         ["Steam Cloud에 진행도가 없습니다.\n이 디바이스 진행도를 클라우드로 업로드할까요?"] =
             "Steam Cloud 中没有进度数据。\n是否上传此设备的进度？",
@@ -97,8 +113,7 @@ internal static class SimplifiedChineseLocalization
         ["최고 승천"] = "最高进阶",
         ["올라간 층"] = "到达楼层",
         ["발견 유물"] = "发现的遗物",
-        ["(상세 통계를 읽지 못함 — 파일은 존재함)"] =
-            "（无法读取详细统计——文件存在）",
+        ["(상세 통계를 읽지 못함 — 파일은 존재함)"] = "（无法读取详细统计——文件存在）",
 
         ["백업 완료"] = "备份完成",
         ["백업 실패"] = "备份失败",
@@ -115,12 +130,10 @@ internal static class SimplifiedChineseLocalization
         ["현재 세이브 데이터를 로컬에 백업할까요?"] = "是否将当前存档数据备份到本地？",
         [
             "Steam 로그인이 만료되었습니다.\n다시 로그인하거나, 클라우드 동기화·창작마당 없이 오프라인으로 계속할 수 있습니다."
-        ] =
-            "Steam 登录已过期。\n你可以重新登录，或在不使用云同步和创意工坊的情况下离线继续。",
+        ] = "Steam 登录已过期。\n你可以重新登录，或在不使用云同步和创意工坊的情况下离线继续。",
         ["다시 로그인"] = "重新登录",
         ["오프라인으로 계속"] = "离线继续",
-        ["Steam 로그인이 만료되었습니다. 다시 로그인해 주세요."] =
-            "Steam 登录已过期，请重新登录。",
+        ["Steam 로그인이 만료되었습니다. 다시 로그인해 주세요."] = "Steam 登录已过期，请重新登录。",
         ["오프라인 모드 — 클라우드 동기화·창작마당은 재로그인 필요"] =
             "离线模式——云同步和创意工坊需要重新登录",
         [
@@ -168,20 +181,15 @@ internal static class SimplifiedChineseLocalization
         ["모드를 관리하려면 저장소 권한이 필요합니다."] = "管理 mod 需要存储空间权限。",
         ["\"Import Mod (.zip)\"를 누르거나 WORKSHOP 탭에서 구독하세요."] =
             "点击“导入 mod（.zip）”，或在创意工坊页面订阅。",
-        ["권한을 허용한 뒤 여기로 돌아와 Refresh 를 누르세요."] =
-            "授权后返回此处并点击刷新。",
-        ["창작마당 기능을 쓰려면 Steam 로그인이 필요합니다."] =
-            "使用创意工坊功能需要登录 Steam。",
+        ["권한을 허용한 뒤 여기로 돌아와 Refresh 를 누르세요."] = "授权后返回此处并点击刷新。",
+        ["창작마당 기능을 쓰려면 Steam 로그인이 필요합니다."] = "使用创意工坊功能需要登录 Steam。",
         ["아직 구독한 창작마당 모드가 없습니다."] = "尚未订阅任何创意工坊 mod。",
         ["WORKSHOP 탭에서 둘러보고 구독하면 자동으로 다운로드됩니다."] =
             "在创意工坊页面浏览并订阅后会自动下载。",
-        ["수동 설치본 존재 — 창작마당 버전 미적용"] =
-            "检测到手动安装版本——未应用创意工坊版本",
-        ["비활성 · 업데이트 있음 — 활성화 후 다운로드"] =
-            "已禁用 · 有可用更新——启用后下载",
+        ["수동 설치본 존재 — 창작마당 버전 미적용"] = "检测到手动安装版本——未应用创意工坊版本",
+        ["비활성 · 업데이트 있음 — 활성화 후 다운로드"] = "已禁用 · 有可用更新——启用后下载",
         ["조회 시간 초과 — 다시 시도해 주세요."] = "查询超时——请重试。",
-        ["Steam 구독은 해제됨; 로컬 정리 건너뜀."] =
-            "已取消 Steam 订阅；已跳过本地清理。",
+        ["Steam 구독은 해제됨; 로컬 정리 건너뜀."] = "已取消 Steam 订阅；已跳过本地清理。",
 
         [
             "Steam 로그인이 만료되어 클라우드 세이브 기능을 쓸 수 없습니다.\n앱을 재실행한 뒤 다시 로그인해 주세요.\n(로컬 기능은 계속 사용할 수 있습니다)"
@@ -198,8 +206,7 @@ internal static class SimplifiedChineseLocalization
         ["세이브 파일이 불완전(손상)해 클라우드 업로드를 보류했습니다."] =
             "存档文件不完整或已损坏，已暂停上传云端。",
         ["세이브 보호 — 클라우드 덮어쓰기 차단"] = "存档保护——已阻止覆盖云端",
-        ["이미 수동 설치된 모드와 충돌(덮어쓰지 않음)"] =
-            "与已手动安装的 mod 冲突（未覆盖）",
+        ["이미 수동 설치된 모드와 충돌(덮어쓰지 않음)"] = "与已手动安装的 mod 冲突（未覆盖）",
         ["모드 매니페스트 없음"] = "缺少 mod 清单",
         ["다운로드 실패"] = "下载失败",
         ["취소됨"] = "已取消",
@@ -257,8 +264,7 @@ internal static class SimplifiedChineseLocalization
         ["리소스 목록 확인 중…"] = "正在检查资源列表…",
         ["셰이더 검색 중…"] = "正在扫描着色器…",
         ["필요할 때 셰이더를 준비하며 계속합니다…"] = "继续运行，并在需要时准备着色器…",
-        ["메모리를 보호하기 위해 사전 준비를 중단했습니다."] =
-            "为保护可用内存，已停止预热。",
+        ["메모리를 보호하기 위해 사전 준비를 중단했습니다."] = "为保护可用内存，已停止预热。",
         ["게임 시작 단계 확인 중…"] = "正在检查游戏启动阶段…",
         ["일반 모드로 재시작"] = "以普通模式重启",
         ["이 세션 계속"] = "继续本次运行",
@@ -301,8 +307,7 @@ internal static class SimplifiedChineseLocalization
         ["CHECK FAILED"] = "检查失败",
         ["Mod Manager"] = "Mod 管理器",
         ["No connection — saved credentials will be used"] = "无网络连接——将使用已保存的凭据",
-        ["Connection failed. Internet required for first launch."] =
-            "连接失败。首次启动需要网络。",
+        ["Connection failed. Internet required for first launch."] = "连接失败。首次启动需要网络。",
         ["Connecting to Steam..."] = "正在连接 Steam…",
         ["Authenticating..."] = "正在验证身份…",
         ["Verifying game ownership..."] = "正在验证游戏所有权…",
@@ -354,14 +359,18 @@ internal static class SimplifiedChineseLocalization
         ["USE WORKSHOP"] = "使用创意工坊版本",
         ["Enter host IP address"] = "输入主机 IP 地址",
         ["JOIN"] = "加入",
-        ["Allow 'All Files Access'?\n\nNeeded for installing mods, saving local game backups, and writing debug logs under /storage/emulated/0/StS2LauncherMM/.\n\nIf you cancel, this prompt will appear again on the next launch."] =
+        [
+            "Allow 'All Files Access'?\n\nNeeded for installing mods, saving local game backups, and writing debug logs under /storage/emulated/0/StS2LauncherMM/.\n\nIf you cancel, this prompt will appear again on the next launch."
+        ] =
             "是否允许“所有文件访问权限”？\n\n安装 mod、保存本地游戏备份以及向 /storage/emulated/0/StS2LauncherMM/ 写入调试日志都需要此权限。\n\n如果取消，下次启动时会再次提示。",
-        ["A Workshop download is still in progress. Leaving the Mod Manager will cancel it. Leave anyway?"] =
-            "创意工坊下载仍在进行。离开 Mod 管理器将取消下载。仍要离开吗？",
+        [
+            "A Workshop download is still in progress. Leaving the Mod Manager will cancel it. Leave anyway?"
+        ] = "创意工坊下载仍在进行。离开 Mod 管理器将取消下载。仍要离开吗？",
         ["Connection timed out. Valid ownership marker found."] =
             "连接超时，但已找到有效的游戏所有权标记。",
-        ["You're already on the latest launcher version.\n\nOpen the GitHub releases page anyway?"] =
-            "当前已是最新启动器版本。\n\n仍要打开 GitHub Release 页面吗？",
+        [
+            "You're already on the latest launcher version.\n\nOpen the GitHub releases page anyway?"
+        ] = "当前已是最新启动器版本。\n\n仍要打开 GitHub Release 页面吗？",
         ["Launcher update download cancelled."] = "启动器更新下载已取消。",
         ["Debug logging disabled."] = "调试日志已关闭。",
         ["(failed to start)"] = "（启动失败）",
@@ -371,8 +380,9 @@ internal static class SimplifiedChineseLocalization
             "是否将本地存档上传到云端？\n这会覆盖你的云存档。",
         ["Pushing local saves to cloud..."] = "正在将本地存档上传到云端…",
         ["Push complete."] = "上传完成。",
-        ["Push timed out — some saves may not have finished uploading. Check your connection and try again."] =
-            "上传超时——部分存档可能尚未上传完成。请检查网络连接后重试。",
+        [
+            "Push timed out — some saves may not have finished uploading. Check your connection and try again."
+        ] = "上传超时——部分存档可能尚未上传完成。请检查网络连接后重试。",
         ["Push finished with errors — some saves may not have uploaded. Check the log."] =
             "上传结束，但出现错误——部分存档可能未上传。请查看日志。",
         ["Push finished."] = "上传结束。",
@@ -402,10 +412,7 @@ internal static class SimplifiedChineseLocalization
         Make(@"^프로필 (\d+)( · 모드)?$", "配置档 $1$2"),
         Make(@"^로컬에만 있음 · (.+)$", "仅本地 · $1"),
         Make(@"^Cloud에만 있음 · (.+)$", "仅云端 · $1"),
-        Make(
-            @"^동기화됨 · (.+) · (\d+)h (\d+)m$",
-            "已同步 · $1 · $2 小时 $3 分钟"
-        ),
+        Make(@"^동기화됨 · (.+) · (\d+)h (\d+)m$", "已同步 · $1 · $2 小时 $3 分钟"),
         Make(@"^동기화됨 · (.+) · (\d+)m$", "已同步 · $1 · $2 分钟"),
         Make(@"^동기화됨 · (.+)$", "已同步 · $1"),
         Make(@"^로컬 (.+) vs Cloud (.+)$", "本地 $1 vs 云端 $2"),
@@ -462,8 +469,14 @@ internal static class SimplifiedChineseLocalization
             "是否移除“$1”？\n此设备上的 mod 文件夹将被删除。"
         ),
         Make(@"^'(.+)'은\(는\) 이미 설치되어 있습니다\. 덮어쓸까요\?$", "“$1”已安装。是否覆盖？"),
-        Make(@"^새 창작마당 모드 (\d+)개 감지 — 다운로드 중:$", "发现 $1 个新的创意工坊 mod——正在下载："),
-        Make(@"^창작마당 모드 업데이트 (\d+)개 감지 — 다운로드 중:$", "发现 $1 个创意工坊 mod 更新——正在下载："),
+        Make(
+            @"^새 창작마당 모드 (\d+)개 감지 — 다운로드 중:$",
+            "发现 $1 个新的创意工坊 mod——正在下载："
+        ),
+        Make(
+            @"^창작마당 모드 업데이트 (\d+)개 감지 — 다운로드 중:$",
+            "发现 $1 个创意工坊 mod 更新——正在下载："
+        ),
         Make(
             @"^다음 모드는 더 이상 Steam 에서 구독 중이 아니므로 삭제됩니다:\n(.+)$",
             "以下 mod 已不再于 Steam 订阅，将被移除：\n$1"
@@ -476,12 +489,18 @@ internal static class SimplifiedChineseLocalization
             @"^수동 설치된 '(.+)'을\(를\) 창작마당 버전\((.+)\)으로 교체할까요\?\n수동 설치 폴더는 삭제됩니다\.$",
             "是否将手动安装的“$1”替换为创意工坊版本（$2）？\n手动安装文件夹将被删除。"
         ),
-        Make(@"^'(.+)' 구독을 해제할까요\? 기기에서 모드가 삭제됩니다\.$", "是否取消订阅“$1”？该 mod 将从此设备移除。"),
+        Make(
+            @"^'(.+)' 구독을 해제할까요\? 기기에서 모드가 삭제됩니다\.$",
+            "是否取消订阅“$1”？该 mod 将从此设备移除。"
+        ),
         Make(
             @"^id (\d+) 에 해당하는 창작마당 아이템이 없습니다\(또는 이 계정으로 접근 불가\)\.$",
             "不存在 ID 为 $1 的创意工坊项目，或此账户无权访问。"
         ),
-        Make(@"^'(.+)' 크기는 (.+) 입니다\. 구독하고 다운로드할까요\?$", "“$1”大小为 $2。是否订阅并下载？"),
+        Make(
+            @"^'(.+)' 크기는 (.+) 입니다\. 구독하고 다운로드할까요\?$",
+            "“$1”大小为 $2。是否订阅并下载？"
+        ),
         Make(
             @"^빈 내용\((\d+) bytes\) 쓰기를 차단했습니다\. 클라우드 상태를 아직 확인하지 못해 안전을 위해 보류합니다\.$",
             "已阻止写入空内容（$1 字节），等待确认云端状态。"
@@ -532,16 +551,10 @@ internal static class SimplifiedChineseLocalization
             @"^(.+) · (\d+)h (\d+)m · (\d+)막 (\d+)층$",
             "$1 · $2 小时 $3 分钟 · 第 $4 幕, 第 $5 层"
         ),
-        Make(
-            @"^(.+) · (\d+)m · (\d+)막 (\d+)층$",
-            "$1 · $2 分钟 · 第 $3 幕, 第 $4 层"
-        ),
+        Make(@"^(.+) · (\d+)m · (\d+)막 (\d+)층$", "$1 · $2 分钟 · 第 $3 幕, 第 $4 层"),
         Make(@"^(.+) · (\d+)h (\d+)m$", "$1 · $2 小时 $3 分钟"),
         Make(@"^(.+) · (\d+)m$", "$1 · $2 分钟"),
-        Make(
-            @"^(\d+) subscriber\(s\) · (.+) · (\d+)% rated$",
-            "$1 位订阅者 · $2 · $3% 好评"
-        ),
+        Make(@"^(\d+) subscriber\(s\) · (.+) · (\d+)% rated$", "$1 位订阅者 · $2 · $3% 好评"),
         Make(@"^(\d+)h (\d+)m$", "$1 小时 $2 分钟"),
         Make(@"^(\d+)m$", "$1 分钟"),
         Make(@"^Downloading launcher v(.+)\.\.\.$", "正在下载启动器 v$1…"),
@@ -553,10 +566,7 @@ internal static class SimplifiedChineseLocalization
         Make(@"^Update check failed: (.+)$", "更新检查失败：$1"),
         Make(@"^Branch list failed: (.+)$", "分支列表加载失败：$1"),
         Make(@"^Launcher update check failed: (.+)$", "启动器更新检查失败：$1"),
-        Make(
-            @"^Failed to check for launcher updates\.\n\n(.+)$",
-            "无法检查启动器更新。\n\n$1"
-        ),
+        Make(@"^Failed to check for launcher updates\.\n\n(.+)$", "无法检查启动器更新。\n\n$1"),
         Make(
             @"^Launcher v(.+) is available, but no APK asset was attached\.\n\nOpen the GitHub releases page in a browser\?$",
             "启动器 v$1 已发布，但 Release 中没有 APK 文件。\n\n是否在浏览器中打开 GitHub Release 页面？"
@@ -623,7 +633,10 @@ internal static class SimplifiedChineseLocalization
         ("클라우드 동기화 중", "正在同步云存档"),
         ("권한을 허용한 뒤 다시 시도하세요", "请授权后重试"),
         ("저장공간 접근 권한이 필요합니다", "需要存储空间访问权限"),
-        ("진행 중이던 런(current_run)은 복사되지 않습니다.", "不会复制正在进行的游戏（current_run）。"),
+        (
+            "진행 중이던 런(current_run)은 복사되지 않습니다.",
+            "不会复制正在进行的游戏（current_run）。"
+        ),
         ("로그를 확인하세요", "请查看日志"),
     };
 
@@ -665,9 +678,7 @@ internal static class SimplifiedChineseLocalization
         foreach (var (pattern, replacement) in Patterns)
         {
             if (pattern.IsMatch(korean))
-                return ForDisplay(
-                    ApplyPhraseReplacements(pattern.Replace(korean, replacement))
-                );
+                return ForDisplay(ApplyPhraseReplacements(pattern.Replace(korean, replacement)));
         }
 
         var phraseTranslated = ApplyPhraseReplacements(korean);

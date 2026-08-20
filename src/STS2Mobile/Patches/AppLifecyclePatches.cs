@@ -4,6 +4,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Godot;
 using HarmonyLib;
+using STS2Mobile.Multiplayer;
 using STS2Mobile.Steam;
 
 namespace STS2Mobile.Patches;
@@ -83,6 +84,7 @@ public static class AppLifecyclePatches
 
             var node = (Node)__instance;
             node.GetTree().Paused = true;
+            SteamInviteCoordinator.OnAppBackgrounded();
 
             // Flush pending cloud writes before the OS may kill the process, but
             // never block Activity.onPause / the Godot main thread while the
@@ -132,6 +134,8 @@ public static class AppLifecyclePatches
         {
             var node = (Node)__instance;
             var tree = node.GetTree();
+
+            SteamInviteCoordinator.OnAppForegrounded();
 
             if (!tree.Paused)
                 return true;

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 
 namespace STS2Mobile.Modding;
 
@@ -29,6 +30,74 @@ public static class ModScanner
         ScanRoot(AppPaths.ExternalModsDir, disabled: false, seenIds, results);
         ScanRoot(AppPaths.DisabledModsDir, disabled: true, seenIds, results);
         return results;
+    }
+
+    // Returns every enabled manifest with this exact id without applying Scan's
+    // first-id-wins de-duplication. Auto-disable must fail closed when duplicate
+    // ids live in different folders rather than guessing which folder the game
+    // loaded and moving unrelated user content.
+    public static List<ModEntryInfo> FindEnabledById(string id)
+    {
+        var results = new List<ModEntryInfo>();
+        if (string.IsNullOrWhiteSpace(id) || !Directory.Exists(AppPaths.ExternalModsDir))
+            return results;
+
+        try
+        {
+            foreach (var topDir in Directory.EnumerateDirectories(AppPaths.ExternalModsDir))
+            {
+                if (Path.GetFileName(topDir).StartsWith("."))
+                    continue;
+                foreach (var (manifest, manifestPath) in ModManifest.EnumerateManifests(topDir))
+                {
+                    if (!string.Equals(manifest.Id, id, StringComparison.Ordinal))
+                        continue;
+                    results.Add(
+                        new ModEntryInfo
+                        {
+                            Path = Path.GetDirectoryName(manifestPath),
+                            TopLevelDir = topDir,
+                            Manifest = manifest,
+                            Disabled = false,
+                        }
+                    );
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log(
+                $"[ModCompat] Enabled-mod ownership scan degraded: {ex.GetType().Name}"
+            );
+        }
+        return results;
+    }
+
+    // Automatic persistence may move only a folder that owns exactly one mod
+    // id. A bundle containing sibling manifests remains a manual user decision.
+    public static bool ContainsOnlyManifestId(string topLevelDir, string expectedId)
+    {
+        if (
+            string.IsNullOrWhiteSpace(expectedId)
+            || !AppPaths.IsDirectChildOfModsDir(topLevelDir)
+            || !Directory.Exists(topLevelDir)
+        )
+            return false;
+        try
+        {
+            var ids = ModManifest
+                .EnumerateManifests(topLevelDir)
+                .Select(entry => entry.Manifest.Id)
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Distinct(StringComparer.Ordinal)
+                .Take(2)
+                .ToList();
+            return ids.Count == 1 && string.Equals(ids[0], expectedId, StringComparison.Ordinal);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static void ScanRoot(

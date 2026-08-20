@@ -47,6 +47,22 @@
       Link="LauncherLanguage.cs"
     />
     <Compile
+      Include="../../src/STS2Mobile/Modding/ModAutoDisablePolicy.cs"
+      Link="ModAutoDisablePolicy.cs"
+    />
+    <Compile
+      Include="../../src/STS2Mobile/Multiplayer/LanInviteCode.cs"
+      Link="LanInviteCode.cs"
+    />
+    <Compile
+      Include="../../src/STS2Mobile/Multiplayer/SteamLobbyInviteMetadata.cs"
+      Link="SteamLobbyInviteMetadata.cs"
+    />
+    <Compile
+      Include="../../src/STS2Mobile/Steam/SteamInviteFriendListPolicy.cs"
+      Link="SteamInviteFriendListPolicy.cs"
+    />
+    <Compile
       Include="../../src/STS2Mobile/Launcher/StartupPerformanceTimeline.cs"
       Link="StartupPerformanceTimeline.cs"
     />
@@ -73,6 +89,30 @@
     <Compile
       Include="../../src/STS2Mobile/Steam/LauncherReleaseChannel.cs"
       Link="LauncherReleaseChannel.cs"
+    />
+    <Compile
+      Include="../../src/STS2Mobile/Steam/SteamAccountIdentity.cs"
+      Link="SteamAccountIdentity.cs"
+    />
+    <Compile
+      Include="../../src/STS2Mobile/Steam/SteamCredentialVaultPolicy.cs"
+      Link="SteamCredentialVaultPolicy.cs"
+    />
+    <Compile
+      Include="../../src/STS2Mobile/Steam/AccountDataIsolation.cs"
+      Link="AccountDataIsolation.cs"
+    />
+    <Compile
+      Include="../../src/STS2Mobile/Steam/AccountSessionGuard.cs"
+      Link="AccountSessionGuard.cs"
+    />
+    <Compile
+      Include="../../src/STS2Mobile/Steam/NonDestructiveFileTransaction.cs"
+      Link="NonDestructiveFileTransaction.cs"
+    />
+    <Compile
+      Include="../../src/STS2Mobile/SensitiveLogRedactor.cs"
+      Link="SensitiveLogRedactor.cs"
     />
   </ItemGroup>
 </Project>

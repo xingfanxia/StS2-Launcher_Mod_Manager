@@ -17,6 +17,7 @@ public class ActionSection : VBoxContainer
     public event Action CloudPullPressed;
     public event Action CheckGameUpdatePressed;
     public event Action CheckLauncherUpdatePressed;
+    public event Action SwitchAccountPressed;
 
     private readonly Button _launchButton;
     private readonly Button _retryButton;
@@ -26,6 +27,7 @@ public class ActionSection : VBoxContainer
     private readonly Button _pullButton;
     private readonly Button _gameUpdateButton;
     private readonly Button _launcherUpdateButton;
+    private readonly Button _switchAccountButton;
     private readonly StyleBoxFlat _offStyle;
     private readonly StyleBoxFlat _onStyle;
 
@@ -109,6 +111,11 @@ public class ActionSection : VBoxContainer
         _launcherUpdateButton.Pressed += () => CheckLauncherUpdatePressed?.Invoke();
         AddChild(_launcherUpdateButton);
 
+        _switchAccountButton = new StyledButton("Steam 계정 전환", scale, fontSize: 14, height: 44);
+        _switchAccountButton.Visible = false;
+        _switchAccountButton.Pressed += () => SwitchAccountPressed?.Invoke();
+        AddChild(_switchAccountButton);
+
         // PLAY is the single filled-accent action of the main screen — everything
         // else stays secondary so it reads as THE thing to press (Von Restorff).
         _launchButton = new StyledButton(
@@ -154,6 +161,7 @@ public class ActionSection : VBoxContainer
         _launcherUpdateButton.Visible = showUpdate;
         _launcherUpdateButton.Disabled = false;
         _launcherUpdateButton.Text = "CHECK LAUNCHER UPDATE";
+        _switchAccountButton.Visible = true;
         _retryButton.Visible = false;
     }
 
@@ -166,6 +174,7 @@ public class ActionSection : VBoxContainer
         PushPullRow.Visible = false;
         _gameUpdateButton.Visible = false;
         _launcherUpdateButton.Visible = false;
+        _switchAccountButton.Visible = false;
     }
 
     public void HideAll()
@@ -177,6 +186,7 @@ public class ActionSection : VBoxContainer
         PushPullRow.Visible = false;
         _gameUpdateButton.Visible = false;
         _launcherUpdateButton.Visible = false;
+        _switchAccountButton.Visible = false;
     }
 
     // Remembers whether the update-check buttons were already disabled by
@@ -210,6 +220,7 @@ public class ActionSection : VBoxContainer
         _localBackupButton.Disabled = busy;
         _retryButton.Disabled = busy;
         _cloudSyncToggle.Disabled = busy;
+        _switchAccountButton.Disabled = busy;
 
         if (busy)
         {
