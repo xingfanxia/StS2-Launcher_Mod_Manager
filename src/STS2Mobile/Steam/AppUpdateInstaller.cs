@@ -22,17 +22,27 @@ public readonly struct ApkDownloadProgress
 
 public static class AppUpdateInstaller
 {
-    private const string ApkFileName = "launcher_update.apk";
-
     public static async Task<string> DownloadApkAsync(
         string url,
+        string expectedVersion,
         IProgress<ApkDownloadProgress> progress,
         CancellationToken ct
     )
     {
         var cacheDir =
             GetCacheDir() ?? throw new InvalidOperationException("Cache dir unavailable");
-        var dest = Path.Combine(cacheDir, ApkFileName);
+        var apkFileName =
+            LauncherReleaseChannel.GetExpectedApkAssetName(expectedVersion)
+            ?? throw new InvalidOperationException("Invalid launcher update version");
+        if (!LauncherReleaseChannel.IsExpectedDownloadUrl(url, expectedVersion))
+            throw new InvalidOperationException("Unexpected launcher update URL");
+
+        // The FileProvider URI includes the filename. Reusing one constant name
+        // across releases lets some OEM installers cache the previous APK's
+        // parsed version and offer to reinstall it. Keep the release asset name
+        // so every launcher version receives a distinct content URI.
+        DeleteStaleInstallerApks(cacheDir, apkFileName);
+        var dest = Path.Combine(cacheDir, apkFileName);
         if (File.Exists(dest))
         {
             try
@@ -92,6 +102,35 @@ public static class AppUpdateInstaller
         }
 
         return dest;
+    }
+
+    private static void DeleteStaleInstallerApks(string cacheDir, string keepName)
+    {
+        try
+        {
+            foreach (var candidate in Directory.EnumerateFiles(cacheDir, "*.apk"))
+            {
+                var name = Path.GetFileName(candidate);
+                var isOwnedInstaller =
+                    string.Equals(name, "launcher_update.apk", StringComparison.OrdinalIgnoreCase)
+                    || (
+                        name.StartsWith("StS2Launcher-v", StringComparison.OrdinalIgnoreCase)
+                        && name.EndsWith(".apk", StringComparison.OrdinalIgnoreCase)
+                    );
+                if (
+                    isOwnedInstaller
+                    && !string.Equals(name, keepName, StringComparison.OrdinalIgnoreCase)
+                )
+                {
+                    try
+                    {
+                        File.Delete(candidate);
+                    }
+                    catch { }
+                }
+            }
+        }
+        catch { }
     }
 
     public static void LaunchInstall(string apkPath)

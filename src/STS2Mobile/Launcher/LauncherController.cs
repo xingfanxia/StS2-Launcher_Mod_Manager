@@ -889,6 +889,7 @@ public class LauncherController
             {
                 var apkPath = await AppUpdateInstaller.DownloadApkAsync(
                     result.DownloadUrl,
+                    result.LatestVersion,
                     progress,
                     cts.Token
                 );
