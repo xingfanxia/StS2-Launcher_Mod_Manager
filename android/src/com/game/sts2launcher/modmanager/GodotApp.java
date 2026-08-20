@@ -112,6 +112,7 @@ public class GodotApp extends GodotActivity {
 	private volatile String debugFrameProbe = "";
 	private volatile boolean debugModSafeMode;
 	private volatile String debugModPartition = "";
+	private volatile String debugModCompanionId = "";
 	private volatile boolean debugDeckCacheMutationProbe;
 	private volatile boolean debugLanInviteChooser;
 	private volatile int debugStartupStageDelaySeconds;
@@ -572,6 +573,16 @@ public class GodotApp extends GodotActivity {
 					String partition = intent.getStringExtra("debug_mod_partition");
 					if (isValidDebugModPartition(partition)) {
 						debugModPartition = partition;
+						String companionId = intent.getStringExtra("debug_mod_companion_id");
+						if (companionId != null) {
+							if (isValidDebugModId(companionId)) {
+								debugModCompanionId = companionId;
+							} else {
+								debugModPartition = "";
+								debugModSafeMode = true;
+								Log.w(TAG, "[FrameProbe] invalid mod companion; falling back to Safe Mode");
+							}
+						}
 					} else {
 						debugModSafeMode = true;
 						Log.w(TAG, "[FrameProbe] invalid mod partition; falling back to Safe Mode");
@@ -643,6 +654,7 @@ public class GodotApp extends GodotActivity {
 				}
 				intent.removeExtra("debug_frame_probe");
 				intent.removeExtra("debug_mod_partition");
+				intent.removeExtra("debug_mod_companion_id");
 				Log.i(TAG, "[FrameProbe] armed mode=" + frameProbe);
 			}
 		} catch (IOException ex) {
@@ -724,6 +736,14 @@ public class GodotApp extends GodotActivity {
 		return result;
 	}
 
+	public String consumeDebugModCompanionId() {
+		if (BuildConfig.VERSION_NAME == null
+				|| !BuildConfig.VERSION_NAME.contains("-debug")) return "";
+		String result = debugModCompanionId;
+		debugModCompanionId = "";
+		return result;
+	}
+
 	private static boolean isValidDebugModPartition(String value) {
 		if (value == null) return false;
 		String[] parts = value.split("/", -1);
@@ -735,6 +755,10 @@ public class GodotApp extends GodotActivity {
 		} catch (NumberFormatException ex) {
 			return false;
 		}
+	}
+
+	private static boolean isValidDebugModId(String value) {
+		return value != null && value.matches("[A-Za-z0-9._-]{1,128}");
 	}
 
 	public void markDebugFrameSpike(long elapsedUsec, long intervalUsec) {

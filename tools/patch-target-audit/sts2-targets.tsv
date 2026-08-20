@@ -57,6 +57,7 @@ optional	method	MegaCrit.Sts2.Core.Nodes.Screens.Settings.NResolutionDropdown	On
 optional	method	MegaCrit.Sts2.Core.Nodes.Screens.Settings.NResolutionDropdownItem	Init	bare	-
 optional	method	MegaCrit.Sts2.Core.Nodes.Screens.Settings.NSettingsScreen	LocalizeLabels	bare	-
 optional	method	MegaCrit.Sts2.Core.Nodes.CommonUi.NGlobalUi	OnWindowChange	bare	-
+optional	method	MegaCrit.Sts2.Core.Nodes.NGame	_Input	bare	-
 optional	method	MegaCrit.Sts2.Core.Nodes.Combat.NMouseCardPlay	_Input	bare	-
 optional	method	MegaCrit.Sts2.Core.Nodes.CommonUi.NInputManager	_UnhandledKeyInput	bare	-
 optional	method	MegaCrit.Sts2.Core.Nodes.CommonUi.NHotkeyManager	_UnhandledInput	bare	-
