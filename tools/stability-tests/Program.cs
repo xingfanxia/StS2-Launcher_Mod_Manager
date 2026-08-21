@@ -22,8 +22,10 @@ try
             Assert(
                 !firstDown.ConsumeOriginal
                     && !firstDown.EmitRightClick
+                    && !firstDown.BeganTwoFingerSequence
                     && secondDown.ConsumeOriginal
-                    && !secondDown.EmitRightClick,
+                    && !secondDown.EmitRightClick
+                    && secondDown.BeganTwoFingerSequence,
                 "the second finger did not take over the gesture"
             );
             Assert(
@@ -38,6 +40,7 @@ try
                     && !firstUp.EmitRightClick
                     && secondUp.ConsumeOriginal
                     && secondUp.EmitRightClick
+                    && secondUp.EndedTwoFingerSequence
                     && Math.Abs(secondUp.X - 120f) < 0.001f
                     && Math.Abs(secondUp.Y - 201f) < 0.001f,
                 "a valid two-finger tap did not emit exactly one centered right click"
@@ -91,15 +94,49 @@ try
     );
 
     Run(
-        "two-finger right click is injected at the global game input boundary",
+        "two-finger right click dispatches exactly once from the game input boundary",
         () =>
         {
             var repository = FindRepositoryRoot();
             var touchPatches = File.ReadAllText(
                 Path.Combine(repository, "src", "STS2Mobile", "Patches", "TouchInputPatches.cs")
             );
+            var dispatcher = File.ReadAllText(
+                Path.Combine(
+                    repository,
+                    "src",
+                    "STS2Mobile",
+                    "Patches",
+                    "TwoFingerRightClickDispatcher.cs"
+                )
+            );
+            var rightClickSources = touchPatches + "\n" + dispatcher;
             var targets = File.ReadAllText(
                 Path.Combine(repository, "tools", "patch-target-audit", "sts2-targets.tsv")
+            );
+            int dispatchStart = dispatcher.IndexOf(
+                "private static void DispatchRightClick",
+                StringComparison.Ordinal
+            );
+            int dispatchEnd = dispatcher.IndexOf(
+                "private static void CancelCapturedPrimaryPress",
+                StringComparison.Ordinal
+            );
+            string dispatch =
+                dispatchStart >= 0 && dispatchEnd > dispatchStart
+                    ? dispatcher[dispatchStart..dispatchEnd]
+                    : string.Empty;
+            int guiDispatch = dispatch.IndexOf(
+                "EmitGuiRightClick(target, position);",
+                StringComparison.Ordinal
+            );
+            int guiReturn =
+                guiDispatch < 0
+                    ? -1
+                    : dispatch.IndexOf("return;", guiDispatch, StringComparison.Ordinal);
+            int globalDispatch = dispatch.IndexOf(
+                "EmitGlobalRightClick(position);",
+                StringComparison.Ordinal
             );
             Assert(
                 touchPatches.Contains(
@@ -109,12 +146,60 @@ try
                     && touchPatches.Contains("nameof(GameInputPrefix)", StringComparison.Ordinal)
                     && touchPatches.Contains("InputEventScreenTouch", StringComparison.Ordinal)
                     && touchPatches.Contains("InputEventScreenDrag", StringComparison.Ordinal)
-                    && touchPatches.Contains("Input.ParseInputEvent", StringComparison.Ordinal)
+                    && touchPatches.Contains(
+                        "TwoFingerRightClickDispatcher.Capture",
+                        StringComparison.Ordinal
+                    )
+                    && touchPatches.Contains(
+                        "TwoFingerRightClickDispatcher.Complete",
+                        StringComparison.Ordinal
+                    )
+                    && rightClickSources.Contains("Input.ParseInputEvent", StringComparison.Ordinal)
+                    && touchPatches.Contains(
+                        "result.BeganTwoFingerSequence",
+                        StringComparison.Ordinal
+                    )
+                    && rightClickSources.Contains("GuiGetHoveredControl", StringComparison.Ordinal)
+                    && rightClickSources.Contains("ActiveHolders", StringComparison.Ordinal)
+                    && rightClickSources.Contains("FocusedHolder", StringComparison.Ordinal)
+                    && rightClickSources.Contains("hand.InCardPlay", StringComparison.Ordinal)
+                    && rightClickSources.Contains(
+                        "child is NCardPlay currentCardPlay",
+                        StringComparison.Ordinal
+                    )
+                    && rightClickSources.Contains(
+                        "currentCardPlay.Holder",
+                        StringComparison.Ordinal
+                    )
+                    && rightClickSources.Contains("holder.Hitbox", StringComparison.Ordinal)
+                    && rightClickSources.Contains("control._HasPoint", StringComparison.Ordinal)
+                    && rightClickSources.Contains(
+                        "GetSignalConnectionList(Control.SignalName.GuiInput)",
+                        StringComparison.Ordinal
+                    )
+                    && rightClickSources.Contains(
+                        "Control.SignalName.GuiInput",
+                        StringComparison.Ordinal
+                    )
+                    && rightClickSources.Contains("target._GuiInput", StringComparison.Ordinal)
+                    && rightClickSources.Contains(
+                        "CancelCapturedPrimaryPress(target)",
+                        StringComparison.Ordinal
+                    )
+                    && rightClickSources.Contains("outsideGlobal", StringComparison.Ordinal)
+                    && rightClickSources.Contains("NPlayerHand.Instance", StringComparison.Ordinal)
+                    && rightClickSources.Contains("CancelAllCardPlay", StringComparison.Ordinal)
+                    && rightClickSources.Contains("GetInspectCardScreen", StringComparison.Ordinal)
+                    && CountOccurrences(dispatch, "EmitGuiRightClick(target, position);") == 1
+                    && CountOccurrences(dispatch, "EmitGlobalRightClick(position);") == 1
+                    && guiDispatch >= 0
+                    && guiReturn > guiDispatch
+                    && globalDispatch > guiReturn
                     && targets.Contains(
                         "optional\tmethod\tMegaCrit.Sts2.Core.Nodes.NGame\t_Input\tbare\t-",
                         StringComparison.Ordinal
                     ),
-                "the gesture state was not connected to the audited global input path"
+                "the gesture was not connected to an audited, exactly-once input route"
             );
         }
     );
