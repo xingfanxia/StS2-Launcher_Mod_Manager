@@ -41,8 +41,8 @@ public static class TouchInputPatches
     // Global game input prefix. Godot dispatches raw ScreenTouch/ScreenDrag
     // events here before GUI handling, while the first finger also produces an
     // emulated primary mouse sequence. Once a second finger takes over, consume
-    // the raw gesture and its primary release, then enqueue one centered right
-    // mouse press/release pair.
+    // the raw gesture and its primary release, then dispatch one desktop-style
+    // right-click action through the captured control.
     public static bool GameInputPrefix(MegaCrit.Sts2.Core.Nodes.NGame __instance, object __0)
     {
         try
@@ -59,15 +59,23 @@ public static class TouchInputPatches
                     touch.Position.Y,
                     now
                 );
+                if (touch.Pressed && !result.ConsumeOriginal)
+                    TwoFingerRightClickDispatcher.Reset();
+                if (result.BeganTwoFingerSequence)
+                    TwoFingerRightClickDispatcher.Capture(__instance, touch.Position);
                 if (!result.ConsumeOriginal)
-                    return true;
-
-                ConsumeInput(__instance);
-                if (result.EmitRightClick)
                 {
-                    EmitRightClick(new Vector2(result.X, result.Y));
-                    PatchHelper.Log("[Input] two-finger right click");
+                    if (!touch.Pressed)
+                        TwoFingerRightClickDispatcher.Reset();
+                    return true;
                 }
+
+                if (result.EndedTwoFingerSequence)
+                    TwoFingerRightClickDispatcher.Complete(
+                        result.EmitRightClick,
+                        new Vector2(result.X, result.Y)
+                    );
+                ConsumeInput(__instance);
                 return false;
             }
 
@@ -93,6 +101,7 @@ public static class TouchInputPatches
         catch (Exception ex)
         {
             TwoFingerTap.Reset();
+            TwoFingerRightClickDispatcher.Reset();
             PatchHelper.Log($"GameInputPrefix: {ex.GetType().Name}: {ex.Message}");
         }
 
@@ -102,26 +111,6 @@ public static class TouchInputPatches
     private static void ConsumeInput(MegaCrit.Sts2.Core.Nodes.NGame game)
     {
         game.GetViewport()?.SetInputAsHandled();
-    }
-
-    private static void EmitRightClick(Vector2 position)
-    {
-        using var pressed = new InputEventMouseButton
-        {
-            ButtonIndex = MouseButton.Right,
-            Pressed = true,
-            Position = position,
-            GlobalPosition = position,
-        };
-        using var released = new InputEventMouseButton
-        {
-            ButtonIndex = MouseButton.Right,
-            Pressed = false,
-            Position = position,
-            GlobalPosition = position,
-        };
-        Input.ParseInputEvent(pressed);
-        Input.ParseInputEvent(released);
     }
 
     // On left mouse button release, check if the card is still in the play zone.

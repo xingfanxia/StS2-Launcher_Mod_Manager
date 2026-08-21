@@ -7,13 +7,24 @@ public readonly struct TwoFingerTapResult
 {
     public bool ConsumeOriginal { get; }
     public bool EmitRightClick { get; }
+    public bool BeganTwoFingerSequence { get; }
+    public bool EndedTwoFingerSequence { get; }
     public float X { get; }
     public float Y { get; }
 
-    public TwoFingerTapResult(bool consumeOriginal, bool emitRightClick, float x, float y)
+    public TwoFingerTapResult(
+        bool consumeOriginal,
+        bool emitRightClick,
+        float x,
+        float y,
+        bool beganTwoFingerSequence = false,
+        bool endedTwoFingerSequence = false
+    )
     {
         ConsumeOriginal = consumeOriginal;
         EmitRightClick = emitRightClick;
+        BeganTwoFingerSequence = beganTwoFingerSequence;
+        EndedTwoFingerSequence = endedTwoFingerSequence;
         X = x;
         Y = y;
     }
@@ -136,8 +147,10 @@ public sealed class TwoFingerTapGesture
         _activeCount++;
         _maximumFingerCount = Math.Max(_maximumFingerCount, _activeCount);
 
+        bool beganTwoFingerSequence = false;
         if (_activeCount == 2)
         {
+            beganTwoFingerSequence = !_twoFingerSequence;
             _twoFingerSequence = true;
             if (ElapsedSinceFirstDown(nowMilliseconds) > MaxFingerJoinMilliseconds)
                 _tapEligible = false;
@@ -148,7 +161,13 @@ public sealed class TwoFingerTapGesture
             _tapEligible = false;
         }
 
-        return new TwoFingerTapResult(_twoFingerSequence, false, 0, 0);
+        return new TwoFingerTapResult(
+            _twoFingerSequence,
+            false,
+            0,
+            0,
+            beganTwoFingerSequence: beganTwoFingerSequence
+        );
     }
 
     private TwoFingerTapResult Release(int index, float x, float y, ulong nowMilliseconds)
@@ -193,9 +212,16 @@ public sealed class TwoFingerTapGesture
             }
         }
 
+        bool endedTwoFingerSequence = _twoFingerSequence;
         _awaitingPrimaryRelease = _twoFingerSequence && !_primaryReleaseSeen;
         EndSequence();
-        return new TwoFingerTapResult(consume, emit, centerX, centerY);
+        return new TwoFingerTapResult(
+            consume,
+            emit,
+            centerX,
+            centerY,
+            endedTwoFingerSequence: endedTwoFingerSequence
+        );
     }
 
     private void BeginSequence(ulong nowMilliseconds)
