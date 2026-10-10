@@ -209,17 +209,23 @@ be active, so another VPN is off while LocalDevVPN is connected.
   16-chunk freelist, background and resume, arena high-water mark with mods.
 - Save upload conflicts, background/resume and kill-during-write cases.
 
-## Candidates to carry to Android
+## Carried to Android (2026-10-10, device-tested on 0.4.11 + patched DLL)
 
-Android also runs the game on Mono with an engine built from source. Work on
-carrying these over is in progress; nothing is released.
+Android also runs the game on Mono. Tested on one 60 Hz phone with 14 mods by
+replacing `STS2Mobile.dll` in the installed 0.4.11 APK; nothing is released.
 
-- Spine's GPU readback in `mesh_get_surface`: the mesh-storage part of
-  `ios/engine/godot-ios.patch` is renderer code shared with Android.
-- Particle systems with very long preprocess times (main-menu clouds, 400 s)
-  simulated in one frame: `ParticlePreprocessPatches` is wired for Android in
-  `ModEntry`.
-- `DamageMeterResumePatches` is platform-neutral but only registered on iOS.
-- A larger nursery (`MONO_GC_PARAMS`), untested on Android.
-- Background JIT warm-up needs the `sts2_jit_compile_only` runtime export, so
-  it would need the same Mono patch on Android.
+- Particle preprocess limiter (`ParticlePreprocessPatches`, registered for
+  Android in `ModEntry`): longest frame on return to the main menu 900-1000 ms
+  to 583-683 ms (five runs each), menu graphics memory 433 to 301 MB. About
+  600 ms of that frame has another cause, not yet attributed.
+- Dropping `GC.Collect()` after room load: not carried. It saved about 80 ms
+  per fight entry inside the black transition and doubled the per-room memory
+  slope, the same direction as on the iPad.
+- Not done: the Spine `mesh_get_surface` readback fix. Android's
+  `libgodot_android.so` is a prebuilt with engine patches whose source is not
+  in this repo, so it cannot be rebuilt from `vendor/godot`.
+- Not yet tried there: `DamageMeterResumePatches` (platform-neutral, registered
+  on iOS only), a larger nursery, background JIT warm-up (needs the
+  `sts2_jit_compile_only` runtime export).
+- Open on Android: about 1.1 s frame at the first fight of every session, and
+  550-880 ms frames on some card plays and end-turns.

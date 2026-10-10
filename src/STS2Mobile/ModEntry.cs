@@ -204,6 +204,11 @@ public static class ModEntry
             {
                 GameLoadFramePacingPatches.Apply(_harmony);
                 DeckViewPerformancePatches.Apply(_harmony);
+#if !STS2_IOS
+                // Carried over from the iOS port, which registers its own copy
+                // in IosPlatform.
+                ParticlePreprocessPatches.Apply();
+#endif
             }
             DebugTransitionTimingPatches.Apply(_harmony);
             LanMultiplayerPatcher.Apply(_harmony);
