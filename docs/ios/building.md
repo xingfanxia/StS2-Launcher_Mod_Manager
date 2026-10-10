@@ -32,6 +32,9 @@ It also keeps a CPU copy of mesh surfaces created with
 `ARRAY_FLAG_USE_DYNAMIC_UPDATE`, so `mesh_get_surface` does not read them back
 from the GPU. The Spine extension calls it for every mesh it creates, and each
 readback stalled the frame until the GPU was idle.
+The Metal driver compiles shader libraries when the shader is created instead
+of at first use, which on iOS happened on the main thread in the middle of
+play (`GODOT_MTL_SHADER_LOAD_STRATEGY=lazy` restores first-use compilation).
 The simulator slice exists because the official .NET template ships an
 x86_64-only simulator engine.
 

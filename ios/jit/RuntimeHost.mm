@@ -66,6 +66,10 @@ static bool InitializeRuntime() {
     }
     NSString *tpa = [assemblies componentsJoinedByString:@":"];
     setenv("MONO_THREADS_SUSPEND", "preemptive", 1);
+    // The default 4 MiB nursery fills about 80 times a minute with mods that
+    // allocate every frame; 32 MiB brings that to about 10 with pauses under one
+    // 60 Hz frame, while 64 MiB made each pause 22-30 ms.
+    setenv("MONO_GC_PARAMS", "nursery-size=32m", 0);
     const char *keys[] = {"TRUSTED_PLATFORM_ASSEMBLIES", "APP_PATHS", "APP_CONTEXT_BASE_DIRECTORY",
         "NATIVE_DLL_SEARCH_DIRECTORIES", "System.Globalization.Invariant", "System.Diagnostics.Tracing.EventSource.IsSupported"};
     const char *values[] = {tpa.UTF8String, managed.UTF8String, managed.UTF8String,

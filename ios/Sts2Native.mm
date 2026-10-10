@@ -121,12 +121,15 @@ STS2_EXPORT void sts2_memory_breakdown(unsigned long long *values) {
 // frame tick, print where it is. Used to find what a long frame is doing.
 static _Atomic unsigned long long stallTicks;
 static pthread_t stallMainThread;
+enum { kStallSamples = 8, kStallDepth = 48 };
+static void *stallFrames[kStallSamples][kStallDepth];
+static int stallCounts[kStallSamples];
+static _Atomic int stallUsed;
 static void StallSignal(int) {
-    void *frames[64];
-    int count = backtrace(frames, 64);
-    static const char header[] = "[Stall] main thread stack:\n";
-    write(STDERR_FILENO, header, sizeof(header) - 1);
-    backtrace_symbols_fd(frames, count, STDERR_FILENO);
+    int index = stallUsed;
+    if (index >= kStallSamples) return;
+    stallCounts[index] = backtrace(stallFrames[index], kStallDepth);
+    stallUsed = index + 1;
 }
 // Sampling profiler for the main thread, sharing the stall signal: while a
 // profile runs, each signal stores a stack instead of printing it.
@@ -217,21 +220,42 @@ STS2_EXPORT void sts2_profile(int milliseconds, int intervalMicroseconds) {
 }
 
 STS2_EXPORT void sts2_stall_tick() { stallTicks++; }
+// Watches the main thread: a frame longer than the given time is sampled a few
+// times while it runs, and the stacks are printed with names once it ends.
 STS2_EXPORT void sts2_stall_watch(int milliseconds) {
     stallMainThread = pthread_self();
     struct sigaction action = {};
     action.sa_handler = ProfileSignal;
     sigaction(SIGINFO, &action, nullptr);
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         unsigned long long seen = stallTicks;
         int quiet = 0, reported = 0;
+        char *(*pmip)(void *) = nullptr;
         for (;;) {
-            usleep(50 * 1000);
+            usleep(5 * 1000);
+            if (profiling) { quiet = 0; reported = 0; seen = stallTicks; continue; }
             unsigned long long now = stallTicks;
-            if (now != seen) { seen = now; quiet = 0; reported = 0; continue; }
-            quiet += 50;
-            // Two samples per stall, some time apart.
-            if (quiet >= milliseconds && reported < 2 && quiet >= milliseconds * (reported + 1)) {
+            if (now != seen) {
+                if (reported) {
+                    if (!pmip) {
+                        void *(*attach)(void *) = (void *(*)(void *))dlsym(RTLD_DEFAULT, "mono_jit_thread_attach");
+                        void *(*root)(void) = (void *(*)(void))dlsym(RTLD_DEFAULT, "mono_get_root_domain");
+                        pmip = (char *(*)(void *))dlsym(RTLD_DEFAULT, "mono_pmip");
+                        if (attach && root) attach(root());
+                    }
+                    fprintf(stderr, "[Stall] frame of about %d ms, %d samples:\n", quiet, stallUsed);
+                    for (int i = 0; i < stallUsed; i++) {
+                        fprintf(stderr, "[Stall] sample %d:\n", i + 1);
+                        for (int f = 3; f < stallCounts[i]; f++)
+                            fprintf(stderr, "[Stall]   %s\n", ProfileName(stallFrames[i][f], pmip).UTF8String);
+                    }
+                    stallUsed = 0;
+                }
+                seen = now; quiet = 0; reported = 0;
+                continue;
+            }
+            quiet += 5;
+            if (quiet >= milliseconds && reported < kStallSamples && quiet >= milliseconds + reported * 40) {
                 reported++;
                 pthread_kill(stallMainThread, SIGINFO);
             }

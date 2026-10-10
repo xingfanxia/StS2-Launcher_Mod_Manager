@@ -126,6 +126,7 @@ internal static class IosPlatform
         // so both get the game pack's CJK fonts behind them instead.
         _harmony = harmony;
         Callable.From(AddFallbacksToDefaultFonts).CallDeferred();
+        STS2Mobile.Patches.DamageMeterResumePatches.Apply();
 
         IosTouchHover.Start();
         IosParticles.Start();
@@ -288,25 +289,6 @@ internal static class IosPlatform
             PatchHelper.Log($"[Display] Frame limit could not be patched: {ex.GetType().Name}: {ex.Message}");
         }
 
-        // The game forces a full blocking collection after every room load. Under
-        // Mono that stops the frame for 50-70 ms on each room change, so that one
-        // becomes a concurrent collection. Skipping it instead let the footprint
-        // grow by about 1.1 GB over 20 rooms. Act and run loads keep the blocking one.
-        try
-        {
-            var loadRoom = HarmonyLib.AccessTools.Method(
-                typeof(MegaCrit.Sts2.Core.Assets.PreloadManager), "LoadRoomAssets");
-            _harmony.Patch(
-                HarmonyLib.AccessTools.AsyncMoveNext(loadRoom),
-                transpiler: new HarmonyLib.HarmonyMethod(typeof(IosPlatform), nameof(CollectConcurrently))
-            );
-            PatchHelper.Log("Patched PreloadManager.LoadRoomAssets (iOS)");
-        }
-        catch (Exception ex)
-        {
-            PatchHelper.Log($"[Memory] Room load collection could not be patched: {ex.GetType().Name}: {ex.Message}");
-        }
-
         // There is no mouse cursor here. The game sets cursor shape and mouse mode
         // whenever a card is aimed, and the engine answers each call with a warning
         // plus a captured C# backtrace, which costs frame time during a drag.
@@ -346,25 +328,6 @@ internal static class IosPlatform
     }
 
     private static bool SkipCall() => false;
-
-    private static System.Collections.Generic.IEnumerable<HarmonyLib.CodeInstruction> CollectConcurrently(
-        System.Collections.Generic.IEnumerable<HarmonyLib.CodeInstruction> instructions)
-    {
-        var collect = HarmonyLib.AccessTools.Method(typeof(GC), nameof(GC.Collect), Type.EmptyTypes);
-        var replaced = 0;
-        foreach (var instruction in instructions)
-        {
-            if (HarmonyLib.CodeInstructionExtensions.Calls(instruction, collect))
-            {
-                // Same instruction object, so labels and exception blocks stay attached.
-                instruction.operand = HarmonyLib.AccessTools.Method(typeof(IosNative), nameof(IosNative.CollectConcurrent));
-                replaced++;
-            }
-            yield return instruction;
-        }
-        if (replaced != 1)
-            PatchHelper.Log($"[Memory] Expected one forced collection in LoadRoomAssets, found {replaced}");
-    }
 
     private static void MaxFpsPrefix(ref int value)
     {

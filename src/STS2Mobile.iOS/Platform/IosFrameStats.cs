@@ -107,7 +107,9 @@ internal static class IosFrameStats
         }
         if (System.Environment.GetEnvironmentVariable("STS2_STALL_STACKS") == "1")
         {
-            IosNative.WatchForStalls(300);
+            IosNative.WatchForStalls(
+                int.TryParse(System.Environment.GetEnvironmentVariable("STS2_STALL_MS"), out var stallMs) ? stallMs : 300
+            );
             _watchStalls = true;
         }
         _last = _windowStart = Stopwatch.GetTimestamp();

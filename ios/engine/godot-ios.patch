@@ -50,6 +50,28 @@ index 886a17d..2f08b56 100644
  
  #if defined(RD_ENABLED)
  	if (rendering_context) {
+diff --git a/drivers/metal/rendering_device_driver_metal.mm b/drivers/metal/rendering_device_driver_metal.mm
+index bb54d7f..3af9f48 100644
+--- a/drivers/metal/rendering_device_driver_metal.mm
++++ b/drivers/metal/rendering_device_driver_metal.mm
+@@ -2806,14 +2806,12 @@ RenderingDeviceDriverMetal::RenderingDeviceDriverMetal(RenderingContextDriverMet
+ 		context_driver(p_context_driver) {
+ 	DEV_ASSERT(p_context_driver != nullptr);
+ 
+-#if TARGET_OS_OSX
++	// Shader libraries are compiled when the shader is created, off the main
++	// thread, on every OS. The lazy strategy compiles on the first draw instead,
++	// which blocks that frame for hundreds of milliseconds on iOS.
+ 	if (String res = OS::get_singleton()->get_environment("GODOT_MTL_SHADER_LOAD_STRATEGY"); res == U"lazy") {
+ 		_shader_load_strategy = ShaderLoadStrategy::LAZY;
+ 	}
+-#else
+-	// Always use the lazy strategy on other OSs like iOS, tvOS, or visionOS.
+-	_shader_load_strategy = ShaderLoadStrategy::LAZY;
+-#endif
+ }
+ 
+ RenderingDeviceDriverMetal::~RenderingDeviceDriverMetal() {
 diff --git a/servers/rendering/renderer_rd/storage_rd/mesh_storage.cpp b/servers/rendering/renderer_rd/storage_rd/mesh_storage.cpp
 index a3c118f..3ccfd11 100644
 --- a/servers/rendering/renderer_rd/storage_rd/mesh_storage.cpp

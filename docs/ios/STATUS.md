@@ -27,7 +27,9 @@ Plan: [PLAN_IOS_PORT.md](../../PLAN_IOS_PORT.md). Updated as milestones move.
 - Starting through the Mac takes about 20 s, half of it preparing the code
   arena over USB; the screen is static meanwhile.
 - `STS2_STALL_STACKS=1` prints the main thread's native stack and the particle
-  systems in the tree whenever a frame takes longer than 300 ms; `devui.sh`
+  systems in the tree whenever a frame takes longer than `STS2_STALL_MS`
+  (default 300), up to eight samples per frame with managed frames named.
+  `MONO_LOG_LEVEL=debug MONO_LOG_MASK=gc` logs every collection. `devui.sh`
   also has `console`, `mem`, `load`, `loadset` and `drop` commands.
 - Host-driven test hooks, all off unless set in the launch environment
   (`build.py launch --env NAME=VALUE`): `STS2_DEBUG_QR_LOGIN`,
@@ -141,35 +143,52 @@ reports the single longest frame). Entering a fight took one frame of about
 
 - Spine's `mesh_get_surface` call per new mesh read three buffers back from
   the GPU (60 % of that frame in `fence_wait`). Fixed in the engine patch.
-- The game calls `GC.Collect()` after every room load, 50-70 ms under Mono.
-  On iOS that call starts a concurrent major collection instead
-  (`sts2_gc_collect_concurrent` in the Mono patch,
-  `IosPlatform.CollectConcurrently`). Removing the call outright was tried
-  first and rejected: over 20 real rooms the footprint grew from 2.8 to 3.9 GB
-  and nursery pauses on the map rose from 23 to 33-42 ms.
+- The game calls `GC.Collect()` after every room load, 50-140 ms under Mono.
+  It is left as the game wrote it: `RunManager` awaits the fade to black
+  before loading the room, so the pause is not visible (screenshot-checked in
+  round 13). Two replacements were tried and reverted. Removing the call: over
+  20 real rooms the footprint grew from 2.8 to 3.9 GB. Starting a concurrent
+  collection instead (commit `b511b2d`): its finishing pause of 26-52 ms
+  landed in visible play after the fade-in.
 
-With the readback fix and the concurrent collection, the third and fourth
-fight entry in a session had a longest frame of 34 ms, all of it waiting for
-the GPU. The first entries still pay one-time costs (particle shader creation,
-JSON metadata in a mod, JIT) of 40-60 ms.
+Round 10 (18 real rooms through the act 1 boss, started without a Mac): no
+crash, Spine rendering correct for the player and 15 enemy types, repeat room
+entries at most 67 ms (86-150 ms before), average 117.7 fps over 452 windows.
 
-Round 10 (18 real rooms through the act 1 boss, started without a Mac, before
-the concurrent-collection change): no crash, Spine rendering correct for the
-player and 15 enemy types, repeat room entries at most 67 ms (86-150 ms
-before), average 117.7 fps over 452 windows.
+## Play stalls fixed on 2026-10-10 (rounds 13-14)
 
-Round 11 (18 more real rooms with the concurrent collection): footprint 3055
-MiB at the menu, 3365 after 9 rooms, 3394 after 18, 3388 back at the menu
-(round 10: 2794, 3487, 3788, 3743). Slow frames attributed to collection fell
-from 568 to 92; one 109 ms collection frame was seen on a shop entry. Nursery
-collections on the map still take about 23 ms each, about twice a second.
+- First play of some cards took one frame of 260-520 ms. Godot's Metal driver
+  compiled each shader library lazily on iOS, at the first pipeline that used
+  it, on the main thread. The engine patch makes it compile at shader creation
+  as on macOS (`GODOT_MTL_SHADER_LOAD_STRATEGY=lazy` restores the old
+  behaviour). The two cards measured went from 583 to 24 ms and 267 to 50 ms;
+  77 further plays and end-turns peaked at 54 ms. Menu footprint and warm-up
+  time did not get worse (2928 MiB, 22.7 s first pass).
+- The DamageMeter window was missing after "continue" until the next fight,
+  because the mod only creates it in its combat-setup hook.
+  `DamageMeterResumePatches` calls the mod's `DamageMeterUI.CreateAndAttach`
+  on `RunManager.RunStarted`. Side effect: the window also floats over the
+  black room transition.
+- Nursery collections on the map ran about 80 times a minute. The Rewind mod's
+  `MapCheckpointOverlay._Process` serialises the whole run (`RunManager.ToSave`)
+  every frame while the map is open, about 10 MiB/s. Its assembly is
+  obfuscated and Harmony cannot patch it (`Token ... is not a valid Type
+  token`), so `ios/jit/RuntimeHost.mm` sets `MONO_GC_PARAMS=nursery-size=32m`
+  unless the variable is already set. Measured per minute of idle map: 4 MiB
+  79 collections, up to 11 ms; 32 MiB 9-11, 12-18 ms; 64 MiB 5-6, 22-30 ms
+  (each one a dropped frame, so not chosen). Footprint over 10 rooms was not
+  higher with either size (3224-3464 MiB against 3548-3573).
 
-Open from round 10:
+Still open, measured but not changed:
 
-- The first time some cards are played, one frame takes 260-520 ms (shader
-  pipeline creation three times, JIT once). This is now the largest stall.
-- After "continue" into a reward or map screen the DamageMeter window is
-  missing until the next fight.
+- First CJK glyphs in a new screen generate MSDF textures on the main thread,
+  90-115 ms on entering a fight, event or shop.
+- ModConfig's `SettingsTabInjector.InjectModsTab` deep-copies the settings tree
+  on every main-menu build, 180-240 ms.
+- Save-conflict dialog, both platforms: "Cancel" logs `falling back to
+  local-only`, but the game's own sync still runs afterwards and has both
+  pulled cloud files over local ones and uploaded local ones.
+- The option button in the run-victory dialogue is clipped at the left edge.
 
 ## Starting without a Mac (verified 2026-10-10)
 
@@ -190,17 +209,17 @@ be active, so another VPN is off while LocalDevVPN is connected.
   16-chunk freelist, background and resume, arena high-water mark with mods.
 - Save upload conflicts, background/resume and kill-during-write cases.
 
-## Candidates to carry to Android (not applied, not tested there)
+## Candidates to carry to Android
 
-Android also runs the game on Mono with an engine built from source, so these
-iOS findings probably apply; none was changed for Android in this work.
+Android also runs the game on Mono with an engine built from source. Work on
+carrying these over is in progress; nothing is released.
 
-- `GC.Collect()` after every room load (`PreloadManager.LoadRoomAssets`):
-  removing it needs a memory check over 15+ real rooms first (see above); the
-  concurrent replacement needs the Mono export.
 - Spine's GPU readback in `mesh_get_surface`: the mesh-storage part of
   `ios/engine/godot-ios.patch` is renderer code shared with Android.
 - Particle systems with very long preprocess times (main-menu clouds, 400 s)
-  simulated in one frame: `IosParticles` is platform-neutral.
+  simulated in one frame: `ParticlePreprocessPatches` is wired for Android in
+  `ModEntry`.
+- `DamageMeterResumePatches` is platform-neutral but only registered on iOS.
+- A larger nursery (`MONO_GC_PARAMS`), untested on Android.
 - Background JIT warm-up needs the `sts2_jit_compile_only` runtime export, so
   it would need the same Mono patch on Android.
