@@ -329,11 +329,7 @@ public static class AppLifecyclePatches
         try
         {
             PatchHelper.Log("NGame.Quit cloud drain finished; restarting app");
-            var jcw = Engine.GetSingleton("JavaClassWrapper");
-            var wrapper = (GodotObject)
-                jcw.Call("wrap", "com.game.sts2launcher.modmanager.GodotApp");
-            var godotApp = (GodotObject)wrapper.Call("getInstance");
-            godotApp.Call("restartApp");
+            PlatformHost.RestartApp();
         }
         catch (Exception ex)
         {

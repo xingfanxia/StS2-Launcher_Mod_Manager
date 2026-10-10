@@ -62,6 +62,10 @@ public static class ModRuntimeCompatibility
                     + "the DLL bytes unchanged and disable its owning mod folder when ownership "
                     + "is resolved unambiguously."
             );
+            PatchHelper.Log(
+                $"[ModCompat] Runtime message for '{assemblyName}': "
+                    + exception.GetBaseException().Message
+            );
         }
         catch (Exception ex)
         {

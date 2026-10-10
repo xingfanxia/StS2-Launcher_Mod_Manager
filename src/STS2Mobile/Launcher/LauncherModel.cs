@@ -21,6 +21,10 @@ public class LauncherModel : IDisposable
 
     private SteamConnection _connection;
     private SteamAuth _auth;
+    private CancellationTokenSource _qrCts;
+
+    // Raised with each Steam QR challenge URL while a QR sign-in is pending.
+    public event Action<string> QrChallengeChanged;
     private DepotDownloader _downloader;
     private CancellationTokenSource _downloadCts;
     private TaskCompletionSource<bool> _launchTcs;
@@ -254,46 +258,7 @@ public class LauncherModel : IDisposable
                 _credentialStore.GetGuardDataForAccount(username)
             );
 
-            // The new token and Guard data exist before ownership verification
-            // and vault publication. Register them at the first possible point
-            // so even an unexpected exception in that gap cannot echo either
-            // value through a Steam/HTTP exception message.
-            SensitiveLogRedactor.RegisterAccount(
-                result.AccountName,
-                0,
-                result.RefreshToken,
-                result.GuardData
-            );
-
-            _auth.Dispose();
-            _auth = null;
-
-            _connection = new SteamConnection(result.AccountName, result.RefreshToken);
-            if (!await VerifyOwnershipAsync(result.AccountName, persistMarker: false))
-                return;
-            if (
-                !FinalizeAuthenticatedIdentity(
-                    result.AccountName,
-                    result.RefreshToken,
-                    result.GuardData,
-                    generation
-                )
-            )
-                return;
-            new OwnershipVerifier(_dataDir, result.AccountName).SaveMarker();
-            SetState(SessionState.LoggedIn);
-            // issue #59 — a fresh interactive login just issued a brand-new
-            // refresh token: both expiry signals reset so the auth gates
-            // (BlockIfTokenExpired) reopen immediately without a restart.
-            SavedTokenExpired = false;
-            SavedTokenExpiringSoon = false;
-            _ = MaybeRenewRefreshTokenAsync();
-
-            if (_accountSwitchPending)
-            {
-                PatchHelper.Log("[AccountSwitch] New account activated; restarting app");
-                GetGodotApp()?.Call("restartApp");
-            }
+            await CompleteLoginAsync(result, generation);
         }
         catch (Exception ex)
         {
@@ -303,6 +268,89 @@ public class LauncherModel : IDisposable
             _auth = null;
         }
     }
+
+    // Shared tail of every interactive login: verify ownership, publish the
+    // credentials, then save the ownership marker.
+    private async Task CompleteLoginAsync(AuthResult result, int generation)
+    {
+        // The new token and Guard data exist before ownership verification
+        // and vault publication. Register them at the first possible point
+        // so even an unexpected exception in that gap cannot echo either
+        // value through a Steam/HTTP exception message.
+        SensitiveLogRedactor.RegisterAccount(
+            result.AccountName,
+            0,
+            result.RefreshToken,
+            result.GuardData
+        );
+
+        _auth.Dispose();
+        _auth = null;
+
+        _connection = new SteamConnection(result.AccountName, result.RefreshToken);
+        if (!await VerifyOwnershipAsync(result.AccountName, persistMarker: false))
+            return;
+        if (
+            !FinalizeAuthenticatedIdentity(
+                result.AccountName,
+                result.RefreshToken,
+                result.GuardData,
+                generation
+            )
+        )
+            return;
+        new OwnershipVerifier(_dataDir, result.AccountName).SaveMarker();
+        SetState(SessionState.LoggedIn);
+        // issue #59 — a fresh interactive login just issued a brand-new
+        // refresh token: both expiry signals reset so the auth gates
+        // (BlockIfTokenExpired) reopen immediately without a restart.
+        SavedTokenExpired = false;
+        SavedTokenExpiringSoon = false;
+        _ = MaybeRenewRefreshTokenAsync();
+
+        if (_accountSwitchPending)
+        {
+            PatchHelper.Log("[AccountSwitch] New account activated; restarting app");
+            PlatformHost.RestartApp();
+        }
+    }
+
+    // Signs in with a QR code scanned by the Steam mobile app. Raises
+    // QrChallengeChanged with each URL to display.
+    public async Task LoginWithQrAsync()
+    {
+        var generation = _sessionGeneration;
+        SetState(SessionState.Authenticating);
+
+        try
+        {
+            _auth = new SteamAuth();
+            _auth.LogMessage += msg => LogReceived?.Invoke(SensitiveLogRedactor.Redact(msg));
+            _qrCts = new CancellationTokenSource();
+            _auth.Connect();
+            var result = await _auth.LoginWithQrAsync(
+                url => QrChallengeChanged?.Invoke(url),
+                _qrCts.Token
+            );
+            await CompleteLoginAsync(result, generation);
+        }
+        catch (OperationCanceledException)
+        {
+            PatchHelper.Log("[Launcher] QR sign-in cancelled");
+            _auth?.Dispose();
+            _auth = null;
+            SetState(SessionState.WaitingForCredentials);
+        }
+        catch (Exception ex)
+        {
+            PatchHelper.Log($"[Launcher] QR sign-in failed: {ex}");
+            SetState(SessionState.Failed, ex.Message);
+            _auth?.Dispose();
+            _auth = null;
+        }
+    }
+
+    public void CancelQrLogin() => _qrCts?.Cancel();
 
     // issue #59 — opportunistic rolling refresh-token renewal, fired
     // fire-and-forget (`_ = ...`) right after a connection has successfully
@@ -549,7 +597,7 @@ public class LauncherModel : IDisposable
         if (!AccountDataIsolation.TryActivate(_dataDir, targetSlot, out _))
         {
             PatchHelper.Log("[AccountSwitch] Target data directory could not be activated");
-            GetGodotApp()?.Call("restartApp");
+            PlatformHost.RestartApp();
             return false;
         }
         if (!_credentialStore.TryActivate(steamId))
@@ -563,13 +611,13 @@ public class LauncherModel : IDisposable
             else
                 AccountDataIsolation.ClearActive();
             PatchHelper.Log("[AccountSwitch] Active account vault update failed");
-            GetGodotApp()?.Call("restartApp");
+            PlatformHost.RestartApp();
             return false;
         }
 
         LauncherPatches.ResetAccountSession();
         PatchHelper.Log("[AccountSwitch] Stored account activated; restarting app");
-        GetGodotApp()?.Call("restartApp");
+        PlatformHost.RestartApp();
         return true;
     }
 
@@ -578,7 +626,7 @@ public class LauncherModel : IDisposable
         if (!_accountSwitchPending)
             return;
         PatchHelper.Log("[AccountSwitch] Add-account flow cancelled; restarting current account");
-        GetGodotApp()?.Call("restartApp");
+        PlatformHost.RestartApp();
     }
 
     private async Task<bool> PrepareForAccountChangeAsync()
@@ -618,7 +666,7 @@ public class LauncherModel : IDisposable
                 PatchHelper.Log(
                     $"[AccountSwitch] Cloud teardown failed; switch aborted: {ex.GetType().Name}"
                 );
-                GetGodotApp()?.Call("restartApp");
+                PlatformHost.RestartApp();
                 return false;
             }
         }
@@ -637,7 +685,7 @@ public class LauncherModel : IDisposable
             PatchHelper.Log(
                 $"[AccountSwitch] Session teardown failed; restarting unchanged account: {ex.GetType().Name}"
             );
-            GetGodotApp()?.Call("restartApp");
+            PlatformHost.RestartApp();
             return false;
         }
         LauncherPatches.ResetAccountSession();
@@ -652,7 +700,10 @@ public class LauncherModel : IDisposable
     )
     {
         if (generation != _sessionGeneration || _connection == null)
+        {
+            PatchHelper.Log("[Launcher] Login result discarded: the session was reset meanwhile");
             return false;
+        }
 
         var authenticatedId = _connection.AuthenticatedSteamId;
         SteamAccountIdentity.TryGetSteamId(refreshToken, out var tokenId);
@@ -665,8 +716,9 @@ public class LauncherModel : IDisposable
         var previousId = _credentialStore.SteamId;
         var targetSlot =
             _credentialStore.GetDataSlot(authenticatedId) ?? SteamCredentialStore.CreateDataSlot();
-        if (!AccountDataIsolation.TryActivate(_dataDir, targetSlot, out _))
+        if (!AccountDataIsolation.TryActivate(_dataDir, targetSlot, out var activationError))
         {
+            PatchHelper.Log($"[Launcher] Account data activation failed: {activationError}");
             SetState(SessionState.Failed, "Could not prepare the account data directory.");
             return false;
         }
@@ -710,7 +762,7 @@ public class LauncherModel : IDisposable
         else
         {
             PatchHelper.Log("[Launcher] Restarting app to load game files");
-            GetGodotApp()?.Call("restartApp");
+            PlatformHost.RestartApp();
         }
     }
 
@@ -772,6 +824,8 @@ public class LauncherModel : IDisposable
     {
         _state = state;
         _failReason = failReason;
+        if (state == SessionState.Failed)
+            PatchHelper.Log($"[Launcher] Session failed: {SensitiveLogRedactor.Redact(failReason ?? "")}");
         SessionStateChanged?.Invoke(state);
     }
 

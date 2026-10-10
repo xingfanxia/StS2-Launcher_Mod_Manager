@@ -171,6 +171,9 @@ public class DepotDownloader : IDisposable
             if (!_filesReplacedDuringDownload.ContainsKey("SlayTheSpire2.pck"))
                 transaction.DetachFileForWrite("SlayTheSpire2.pck");
             PatchGamePck(Path.Combine(_gameDir, "SlayTheSpire2.pck"));
+            // Throws when the pack cannot be made loadable, which leaves the
+            // previous install active.
+            PlatformHost.PrepareGamePack?.Invoke(_gameDir);
             _faultInjector.Hit("after-pck-patched");
 
             var tuple = GameInstallTuple.Capture(

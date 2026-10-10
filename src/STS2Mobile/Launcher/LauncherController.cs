@@ -166,6 +166,12 @@ public class LauncherController
 
         _view.Login.LoginRequested += OnLoginPressed;
         _view.Login.AccountSwitchCancelled += OnAccountSwitchCancelled;
+        _view.Login.QrLoginRequested += OnQrLoginPressed;
+        _view.Login.QrLoginCancelled += _model.CancelQrLogin;
+        _model.QrChallengeChanged += OnQrChallengeChanged;
+        // Test hook: start QR sign-in without a tap so automated runs can see the screen.
+        if (System.Environment.GetEnvironmentVariable("STS2_DEBUG_QR_LOGIN") == "1")
+            Callable.From(OnQrLoginPressed).CallDeferred();
         _view.Code.CodeSubmitted += OnCodeSubmitPressed;
         _view.Download.DownloadRequested += OnDownloadPressed;
         _view.Actions.LaunchPressed += OnLaunchPressed;
@@ -293,6 +299,9 @@ public class LauncherController
         );
         var firstShow = !_launchStageShown;
         _launchStageShown = true;
+        // Test hook: press PLAY without a tap so a device run can be driven from the host.
+        if (firstShow && System.Environment.GetEnvironmentVariable("STS2_DEBUG_AUTO_PLAY") == "1")
+            Callable.From(OnLaunchPressed).CallDeferred();
         _lastLaunchText = text;
         _lastShowCloudSync = showCloudSync;
         _lastShowUpdate = showUpdate;
@@ -547,6 +556,39 @@ public class LauncherController
         _view.Login.SetDisabled(true);
         _view.Login.ClearPassword();
         await _model.LoginAsync(username, password);
+    }
+
+    private async void OnQrLoginPressed()
+    {
+        _view.Login.SetDisabled(true);
+        _view.Login.ClearPassword();
+        await _model.LoginWithQrAsync();
+    }
+
+    private void OnQrChallengeChanged(string url)
+    {
+        _runOnMainThread(() =>
+        {
+            Texture2D code = null;
+            try
+            {
+                code = PlatformHost.QrCodeRenderer?.Invoke(url);
+            }
+            catch (Exception ex)
+            {
+                PatchHelper.Log($"[Launcher] QR rendering failed: {ex}");
+            }
+            if (code == null)
+            {
+                _view.AppendLog("Could not draw the Steam QR code.");
+                _model.CancelQrLogin();
+                return;
+            }
+            // The authenticating state hides every section; the code is shown in the login one.
+            _view.Login.Visible = true;
+            _view.Login.ShowQrCode(code);
+            _view.SetStatus("Scan the QR code with the Steam mobile app");
+        });
     }
 
     private void OnSwitchAccountPressed()
@@ -1389,7 +1431,7 @@ public class LauncherController
                     $"[Cloud] Pre-restart flush failed, restarting anyway: {ex.Message}"
                 );
             }
-            _runOnMainThread(() => LauncherModel.GetGodotApp()?.Call("restartApp"));
+            _runOnMainThread(() => PlatformHost.RestartApp());
         });
     }
 

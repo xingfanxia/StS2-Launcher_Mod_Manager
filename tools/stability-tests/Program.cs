@@ -543,11 +543,11 @@ try
                         StringComparison.Ordinal
                     )
                     && modelSource.Contains(
-                        "SensitiveLogRedactor.RegisterAccount(\n                result.AccountName",
+                        "SensitiveLogRedactor.RegisterAccount(\n            result.AccountName",
                         StringComparison.Ordinal
                     )
                     && modelSource.IndexOf(
-                        "SensitiveLogRedactor.RegisterAccount(\n                result.AccountName",
+                        "SensitiveLogRedactor.RegisterAccount(\n            result.AccountName",
                         StringComparison.Ordinal
                     )
                         < modelSource.IndexOf(

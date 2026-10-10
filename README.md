@@ -20,6 +20,29 @@ An Android launcher + mod manager for **Slay the Spire 2**, built on a custom Go
 
 Full walkthrough with screenshots: [사용설명서 (USER_GUIDE.md)](docs/USER_GUIDE.md). Upgrading between fork versions is a drop-in APK install — saves, login, and the game payload are preserved.
 
+## iOS / iPadOS (experimental)
+
+The `feat/ios-port` work adds a sideloaded iOS / iPadOS build that runs the game
+under Mono JIT with Harmony, so the same launcher, Steam login (including QR),
+on-device download, Workshop Mod Hub, cloud sync and runtime mods work there.
+It has been run on one device: an M4 iPad Pro on iPadOS 27.0, with 14 Workshop
+mods, through two long runs.
+
+What is different from Android:
+
+- There is no release build. You build and sign it yourself with an Apple
+  developer account ([docs/ios/building.md](docs/ios/building.md)).
+- iOS only allows JIT in a process a debugger has attached to, so every start
+  needs one. Either start the app from a Mac, or install StikDebug and
+  LocalDevVPN on the device; the app then hands off to StikDebug by itself
+  ([Starting without a Mac](docs/ios/building.md#starting-without-a-mac)).
+- The app cannot restart itself; after a game install or update it asks you to
+  reopen it.
+
+Status, measurements and what is not verified (iPhone, other devices):
+[docs/ios/STATUS.md](docs/ios/STATUS.md). Design decisions:
+[docs/ios/DECISIONS.md](docs/ios/DECISIONS.md). Plan: [PLAN_IOS_PORT.md](PLAN_IOS_PORT.md).
+
 ## Differences from upstream
 
 The fork diverged from `Ekyso/StS2-Launcher` in April 2026. Everything below is fork-added; per-version details live on the [Releases page](https://github.com/iunius612/StS2-Launcher_Mod_Manager/releases).

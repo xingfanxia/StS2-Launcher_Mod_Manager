@@ -12,17 +12,22 @@ public static class AppPaths
     // are pointed to README/release notes for the manual move — auto-migration
     // would only help upgrade-from-our-fork users while adding code complexity
     // and surprising fresh installers, so it's intentionally not implemented.
-    public const string ExternalRoot = "/storage/emulated/0/StS2LauncherMM";
-    public const string ExternalModsDir = ExternalRoot + "/Mods";
+#if STS2_IOS
+    // The app's Documents folder, which the Files app shows to the user.
+    public static readonly string ExternalRoot = Platform.IosPlatform.Documents;
+#else
+    public static readonly string ExternalRoot = "/storage/emulated/0/StS2LauncherMM";
+#endif
+    public static readonly string ExternalModsDir = ExternalRoot + "/Mods";
 
     // Issue #58 stash: disabled mods live in a SIBLING of Mods/, never inside it —
     // the game's ModManager recursively scans everything under Mods/, so any
     // "disabled" subfolder there would still be loaded. Moving a top-level mod
     // folder between these two roots is the entire enable/disable mechanism
     // (same volume ⇒ instant rename, no re-download).
-    public const string DisabledModsDir = ExternalRoot + "/ModsDisabled";
-    public const string ExternalSaveBackupsDir = ExternalRoot + "/Saves";
-    public const string ExternalLogsDir = ExternalRoot + "/Logs";
+    public static readonly string DisabledModsDir = ExternalRoot + "/ModsDisabled";
+    public static readonly string ExternalSaveBackupsDir = ExternalRoot + "/Saves";
+    public static readonly string ExternalLogsDir = ExternalRoot + "/Logs";
 
     // Issue #36 Part A redesign: backups are segregated by origin under Saves/.
     //   manual/ — user-triggered snapshots (LocalBackupService.BackupNow). Never
@@ -34,8 +39,8 @@ public static class AppPaths
         Steam.AccountDataIsolation.GetExternalBackupDirectory(ExternalSaveBackupsDir, "auto");
 
     // User-editable configs that need to be reachable without root/ADB (issue #26).
-    public const string ExternalConfigDir = ExternalRoot + "/Config";
-    public const string ExternalModConfigFile = ExternalModsDir + "/mod_config.json";
+    public static readonly string ExternalConfigDir = ExternalRoot + "/Config";
+    public static readonly string ExternalModConfigFile = ExternalModsDir + "/mod_config.json";
 
     // Issue #58: Workshop preview-image cache. App-internal storage (not
     // ExternalRoot) since these are disposable, re-downloadable thumbnails with
@@ -89,6 +94,8 @@ public static class AppPaths
     // Returns true if the app has permission to write to shared external storage.
     public static bool HasStoragePermission()
     {
+        if (!PlatformHost.RequiresStoragePermission)
+            return true;
         try
         {
             var godotApp = GetGodotApp();

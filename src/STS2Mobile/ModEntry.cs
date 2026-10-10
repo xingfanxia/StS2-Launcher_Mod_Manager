@@ -57,6 +57,9 @@ public static class ModEntry
             return;
         _applied = true;
 
+#if STS2_IOS
+        Platform.IosPlatform.Initialize();
+#else
         // issue #19/#27: .NET Path.GetTempPath() falls back to "/tmp" on Unix
         // when TMPDIR is unset; some Android ROMs (Lenovo ZUI 14, certain OneUI
         // builds) don't set TMPDIR for app processes and /tmp/ doesn't exist on
@@ -107,10 +110,14 @@ public static class ModEntry
                 $"[STS2Mobile] [Diag] XDG_CONFIG_HOME override failed: {ex.Message}"
             );
         }
+#endif
 
         PatchHelper.Log("Initializing STS2Mobile...");
 
         _harmony = new Harmony("com.sts2mobile");
+#if STS2_IOS
+        Platform.IosPlatform.ApplyPatches(_harmony);
+#endif
 
         // Game-assembly-independent — must run in both standalone-launcher and game modes
         // (issue #11 affects the launcher UI too on Fold6).
@@ -210,6 +217,9 @@ public static class ModEntry
             CoveredStartupLogoPatches.Apply(_harmony);
             LauncherPatches.Apply(_harmony);
             SaveDiagnosticPatches.Apply(_harmony);
+#if STS2_IOS
+            Platform.IosCombatLayout.Apply(_harmony);
+#endif
 
             PatchHelper.Log("All game patches applied.");
         }

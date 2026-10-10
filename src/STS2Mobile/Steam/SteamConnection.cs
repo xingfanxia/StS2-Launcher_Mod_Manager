@@ -176,6 +176,13 @@ public class SteamConnection : IDisposable
         }
     }
 
+    // Steam ends an earlier session when the same account logs on again with
+    // the same login id from one address. The launcher and cloud connections
+    // overlap, so each gets its own id where the platform asks for that.
+    private readonly uint? _loginId = PlatformHost.UniqueSteamLoginIds
+        ? (uint)Random.Shared.Next(1, int.MaxValue)
+        : null;
+
     public SteamConnection(string accountName, string refreshToken, int idleTimeoutMs = 30_000)
     {
         _accountName = accountName;
@@ -202,6 +209,7 @@ public class SteamConnection : IDisposable
                     Username = _accountName,
                     AccessToken = _refreshToken,
                     ShouldRememberPassword = true,
+                    LoginID = _loginId,
                 }
             );
         });

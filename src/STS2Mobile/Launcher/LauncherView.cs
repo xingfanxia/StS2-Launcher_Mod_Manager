@@ -56,6 +56,17 @@ public class LauncherView
             var sysFont = new SystemFont();
             sysFont.FontNames = new[] { "sans-serif" };
             sysFont.AllowSystemFallback = true;
+            // Where the system fallback cannot supply CJK glyphs, the platform
+            // names fonts from the game pack to fall back to.
+            var fallbacks = new Godot.Collections.Array<Font>();
+            foreach (var path in PlatformHost.LauncherFallbackFonts)
+            {
+                if (ResourceLoader.Exists(path) && ResourceLoader.Load(path) is Font font)
+                    fallbacks.Add(font);
+            }
+            if (fallbacks.Count > 0)
+                sysFont.Fallbacks = fallbacks;
+            PatchHelper.Log($"[Launcher] Theme font fallbacks from game pack: {fallbacks.Count}");
             var theme = new Theme { DefaultFont = sysFont };
             parent.Theme = theme;
         }

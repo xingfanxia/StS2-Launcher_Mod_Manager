@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="sts2"><HintPath>../../upstream/game-refs/sts2.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="GodotSharp"><HintPath>../../upstream/game-refs/GodotSharp.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="0Harmony"><HintPath>../../upstream/game-refs/0Harmony.dll</HintPath><Private>false</Private></Reference>
+    <ProjectReference Include="../STS2MobileIos/STS2MobileIos.csproj" />
+    <EmbeddedResource Include="../STS2MobileIos/manifest.json" LogicalName="mobile-hooks.json" />
+  </ItemGroup>
+</Project>

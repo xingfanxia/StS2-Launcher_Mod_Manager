@@ -29,7 +29,7 @@ public static class ModGuardAlert
     private static System.Threading.Timer _testWatcher;
 
     private const string QaToolsEnvironmentVariable = "STS2_DEBUG_QA_TOOLS";
-    private const string TestTriggerFile = AppPaths.ExternalRoot + "/.modguard_test_alert";
+    private static readonly string TestTriggerFile = AppPaths.ExternalRoot + "/.modguard_test_alert";
 
     public static void ShowForMod(string modName, string exceptionType)
     {

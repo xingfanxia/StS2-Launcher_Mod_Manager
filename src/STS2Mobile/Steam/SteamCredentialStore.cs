@@ -75,15 +75,14 @@ public class SteamCredentialStore
                 return;
 
             var encrypted = File.ReadAllText(_credentialsPath);
-            var godotApp = GetGodotApp();
-            if (godotApp == null)
+            if (!PlatformHost.Secrets.Available)
             {
                 PatchHelper.Log("[Credentials] Credential service unavailable");
                 _loadFailed = true;
                 return;
             }
 
-            var json = (string)godotApp.Call("decryptString", encrypted);
+            var json = PlatformHost.Secrets.Decrypt(encrypted);
             if (string.IsNullOrWhiteSpace(json))
             {
                 // Preserve the unreadable file. Deleting it would silently remove
@@ -253,8 +252,7 @@ public class SteamCredentialStore
         {
             var dir = Path.GetDirectoryName(_credentialsPath)!;
             Directory.CreateDirectory(dir);
-            var godotApp = GetGodotApp();
-            if (godotApp == null)
+            if (!PlatformHost.Secrets.Available)
             {
                 PatchHelper.Log("[Credentials] Credential service unavailable");
                 return false;
@@ -262,7 +260,7 @@ public class SteamCredentialStore
 
             _vault.Version = CurrentVersion;
             var json = JsonSerializer.Serialize(_vault);
-            var encrypted = (string)godotApp.Call("encryptString", json);
+            var encrypted = PlatformHost.Secrets.Encrypt(json);
             if (string.IsNullOrWhiteSpace(encrypted))
             {
                 PatchHelper.Log("[Credentials] Vault encryption failed");
@@ -313,21 +311,6 @@ public class SteamCredentialStore
         && account.SteamId != 0
         && !string.IsNullOrWhiteSpace(account.AccountName)
         && !string.IsNullOrWhiteSpace(account.RefreshToken);
-
-    private static GodotObject GetGodotApp()
-    {
-        try
-        {
-            var jcw = Engine.GetSingleton("JavaClassWrapper");
-            var wrapper = (GodotObject)
-                jcw.Call("wrap", "com.game.sts2launcher.modmanager.GodotApp");
-            return (GodotObject)wrapper.Call("getInstance");
-        }
-        catch
-        {
-            return null;
-        }
-    }
 
     private sealed class CredentialVault
     {

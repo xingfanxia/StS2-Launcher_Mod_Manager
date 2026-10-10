@@ -40,7 +40,7 @@ internal static class GameplayPipelineWarmup
 
         if (
             _attemptedForProcess
-            || !OS.HasFeature("android")
+            || !(OS.HasFeature("android") || PlatformHost.CoverFirstHand)
             || hand == null
             || !hand.IsInsideTree()
             || hand.GetViewport() is SubViewport

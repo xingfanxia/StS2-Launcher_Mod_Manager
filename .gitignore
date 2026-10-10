@@ -56,3 +56,19 @@ patchnotes.md
 
 # user_file
 .userfile/
+
+# iOS port: local toolchains, caches, generated hosts and signing inputs
+.cache/
+.tools/
+upstream/
+ios/addons/
+ios/config.local.json
+ios/export_presets.cfg
+**/.godot/
+src/*/bin/
+src/*/obj/
+**/__pycache__/
+*.ipa
+*.mobileprovision
+*.p12
+*.p8

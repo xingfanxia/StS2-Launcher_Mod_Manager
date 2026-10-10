@@ -1,0 +1,146 @@
+diff --git a/drivers/apple_embedded/display_server_apple_embedded.mm b/drivers/apple_embedded/display_server_apple_embedded.mm
+index 886a17d..2f08b56 100644
+--- a/drivers/apple_embedded/display_server_apple_embedded.mm
++++ b/drivers/apple_embedded/display_server_apple_embedded.mm
+@@ -135,7 +135,8 @@ DisplayServerAppleEmbedded::DisplayServerAppleEmbedded(const String &p_rendering
+ 			return;
+ 		}
+ 
+-		Size2i size = Size2i(layer.bounds.size.width, layer.bounds.size.height) * screen_get_max_scale();
++		// Scaled in floating point: the screen scale may be fractional (render scale).
++		Size2i size = (Size2(layer.bounds.size.width, layer.bounds.size.height) * screen_get_max_scale()).round();
+ 		rendering_context->window_set_size(MAIN_WINDOW_ID, size.width, size.height);
+ 		rendering_context->window_set_vsync_mode(MAIN_WINDOW_ID, p_vsync_mode);
+ 
+@@ -483,8 +484,8 @@ Rect2i DisplayServerAppleEmbedded::get_display_safe_area() const {
+ 		insets = [view safeAreaInsets];
+ 	}
+ 	float scale = screen_get_scale();
+-	Size2i insets_position = Size2i(insets.left, insets.top) * scale;
+-	Size2i insets_size = Size2i(insets.left + insets.right, insets.top + insets.bottom) * scale;
++	Size2i insets_position = (Size2(insets.left, insets.top) * scale).round();
++	Size2i insets_size = (Size2(insets.left + insets.right, insets.top + insets.bottom) * scale).round();
+ 	return Rect2i(screen_get_position() + insets_position, screen_get_size() - insets_size);
+ }
+ 
+@@ -515,7 +516,7 @@ Size2i DisplayServerAppleEmbedded::screen_get_size(int p_screen) const {
+ 		return Size2i();
+ 	}
+ 
+-	return Size2i(layer.bounds.size.width, layer.bounds.size.height) * screen_get_scale(p_screen);
++	return (Size2(layer.bounds.size.width, layer.bounds.size.height) * screen_get_scale(p_screen)).round();
+ }
+ 
+ Rect2i DisplayServerAppleEmbedded::screen_get_usable_rect(int p_screen) const {
+@@ -614,7 +615,7 @@ void DisplayServerAppleEmbedded::window_set_size(const Size2i p_size, WindowID p
+ Size2i DisplayServerAppleEmbedded::window_get_size(WindowID p_window) const {
+ 	id<UIApplicationDelegate> appDelegate = [[UIApplication sharedApplication] delegate];
+ 	CGRect windowBounds = appDelegate.window.bounds;
+-	return Size2i(windowBounds.size.width, windowBounds.size.height) * screen_get_max_scale();
++	return (Size2(windowBounds.size.width, windowBounds.size.height) * screen_get_max_scale()).round();
+ }
+ 
+ Size2i DisplayServerAppleEmbedded::window_get_size_with_decorations(WindowID p_window) const {
+@@ -788,7 +789,7 @@ bool DisplayServerAppleEmbedded::screen_is_kept_on() const {
+ }
+ 
+ void DisplayServerAppleEmbedded::resize_window(CGSize viewSize) {
+-	Size2i size = Size2i(viewSize.width, viewSize.height) * screen_get_max_scale();
++	Size2i size = (Size2(viewSize.width, viewSize.height) * screen_get_max_scale()).round();
+ 
+ #if defined(RD_ENABLED)
+ 	if (rendering_context) {
+diff --git a/servers/rendering/renderer_rd/storage_rd/mesh_storage.cpp b/servers/rendering/renderer_rd/storage_rd/mesh_storage.cpp
+index a3c118f..3ccfd11 100644
+--- a/servers/rendering/renderer_rd/storage_rd/mesh_storage.cpp
++++ b/servers/rendering/renderer_rd/storage_rd/mesh_storage.cpp
+@@ -369,6 +369,12 @@ void MeshStorage::mesh_add_surface(RID p_mesh, const RS::SurfaceData &p_surface)
+ 
+ 	s->format = new_surface.format;
+ 	s->primitive = new_surface.primitive;
++	if (new_surface.format & RS::ARRAY_FLAG_USE_DYNAMIC_UPDATE) {
++		s->has_cpu_data = true;
++		s->cpu_vertex_data = p_surface.vertex_data;
++		s->cpu_attribute_data = p_surface.attribute_data;
++		s->cpu_index_data = p_surface.index_data;
++	}
+ 
+ 	const bool use_as_storage = (new_surface.skin_data.size() || mesh->blend_shape_count > 0);
+ 	const BitField<RD::BufferCreationBits> as_storage_flag = use_as_storage ? RD::BUFFER_CREATION_AS_STORAGE_BIT : 0;
+@@ -575,6 +581,12 @@ void MeshStorage::mesh_surface_update_vertex_region(RID p_mesh, int p_surface, i
+ 	const uint8_t *r = p_data.ptr();
+ 
+ 	RD::get_singleton()->buffer_update(mesh->surfaces[p_surface]->vertex_buffer, p_offset, data_size, r);
++	Mesh::Surface *cached = mesh->surfaces[p_surface];
++	if (cached->has_cpu_data && p_offset >= 0 && uint64_t(p_offset) + data_size <= uint64_t(cached->cpu_vertex_data.size())) {
++		memcpy(cached->cpu_vertex_data.ptrw() + p_offset, r, data_size);
++	} else {
++		cached->has_cpu_data = false;
++	}
+ }
+ 
+ void MeshStorage::mesh_surface_update_attribute_region(RID p_mesh, int p_surface, int p_offset, const Vector<uint8_t> &p_data) {
+@@ -588,6 +600,12 @@ void MeshStorage::mesh_surface_update_attribute_region(RID p_mesh, int p_surface
+ 	const uint8_t *r = p_data.ptr();
+ 
+ 	RD::get_singleton()->buffer_update(mesh->surfaces[p_surface]->attribute_buffer, p_offset, data_size, r);
++	Mesh::Surface *cached = mesh->surfaces[p_surface];
++	if (cached->has_cpu_data && p_offset >= 0 && uint64_t(p_offset) + data_size <= uint64_t(cached->cpu_attribute_data.size())) {
++		memcpy(cached->cpu_attribute_data.ptrw() + p_offset, r, data_size);
++	} else {
++		cached->has_cpu_data = false;
++	}
+ }
+ 
+ void MeshStorage::mesh_surface_update_skin_region(RID p_mesh, int p_surface, int p_offset, const Vector<uint8_t> &p_data) {
+@@ -614,6 +632,12 @@ void RendererRD::MeshStorage::mesh_surface_update_index_region(RID p_mesh, int p
+ 	const uint8_t *r = p_data.ptr();
+ 
+ 	RD::get_singleton()->buffer_update(mesh->surfaces[p_surface]->index_buffer, p_offset, data_size, r);
++	Mesh::Surface *cached = mesh->surfaces[p_surface];
++	if (cached->has_cpu_data && p_offset >= 0 && uint64_t(p_offset) + data_size <= uint64_t(cached->cpu_index_data.size())) {
++		memcpy(cached->cpu_index_data.ptrw() + p_offset, r, data_size);
++	} else {
++		cached->has_cpu_data = false;
++	}
+ }
+ 
+ void MeshStorage::mesh_surface_set_material(RID p_mesh, int p_surface, RID p_material) {
+@@ -643,6 +667,19 @@ RS::SurfaceData MeshStorage::mesh_get_surface(RID p_mesh, int p_surface) const {
+ 
+ 	RS::SurfaceData sd;
+ 	sd.format = s.format;
++	if (s.has_cpu_data && s.lod_count == 0 && !s.skin_buffer.is_valid() && !s.blend_shape_buffer.is_valid()) {
++		sd.vertex_data = s.cpu_vertex_data;
++		sd.attribute_data = s.cpu_attribute_data;
++		sd.index_data = s.cpu_index_data;
++		sd.vertex_count = s.vertex_count;
++		sd.index_count = s.index_count;
++		sd.primitive = s.primitive;
++		sd.aabb = s.aabb;
++		sd.uv_scale = s.uv_scale;
++		sd.bone_aabbs = s.bone_aabbs;
++		sd.mesh_to_skeleton_xform = s.mesh_to_skeleton_xform;
++		return sd;
++	}
+ 	if (s.vertex_buffer.is_valid()) {
+ 		sd.vertex_data = RD::get_singleton()->buffer_get_data(s.vertex_buffer);
+ 		// When using an uncompressed buffer with normals, but without tangents, we have to trim the padding.
+diff --git a/servers/rendering/renderer_rd/storage_rd/mesh_storage.h b/servers/rendering/renderer_rd/storage_rd/mesh_storage.h
+index 5640918..f90fbb9 100644
+--- a/servers/rendering/renderer_rd/storage_rd/mesh_storage.h
++++ b/servers/rendering/renderer_rd/storage_rd/mesh_storage.h
+@@ -88,6 +88,13 @@ private:
+ 			RID skin_buffer;
+ 			uint32_t skin_buffer_size = 0;
+ 
++			// Dynamic-update surfaces keep the data they were created with, so
++			// mesh_get_surface does not read it back from the GPU.
++			bool has_cpu_data = false;
++			Vector<uint8_t> cpu_vertex_data;
++			Vector<uint8_t> cpu_attribute_data;
++			Vector<uint8_t> cpu_index_data;
++
+ 			// A different pipeline needs to be allocated
+ 			// depending on the inputs available in the
+ 			// material.

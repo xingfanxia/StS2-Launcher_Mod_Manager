@@ -34,13 +34,12 @@ public class OwnershipVerifier
     {
         try
         {
-            var godotApp = GetGodotApp();
-            if (MarkerMatches(_markerPath, godotApp))
+            if (MarkerMatches(_markerPath))
                 return true;
 
             // Upgrade path: copy a matching global v1 marker into the first
             // account slot, preserving the original file and offline play.
-            if (_markerPath != _legacyMarkerPath && MarkerMatches(_legacyMarkerPath, godotApp))
+            if (_markerPath != _legacyMarkerPath && MarkerMatches(_legacyMarkerPath))
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(_markerPath)!);
                 var temporary = _markerPath + ".tmp";
@@ -86,8 +85,7 @@ public class OwnershipVerifier
                     VerifiedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
                 }
             );
-            var godotApp = GetGodotApp();
-            var encrypted = (string)godotApp?.Call("encryptString", json);
+            var encrypted = PlatformHost.Secrets.Encrypt(json);
             if (encrypted != null)
                 File.WriteAllText(_markerPath, encrypted);
         }
@@ -97,30 +95,15 @@ public class OwnershipVerifier
         }
     }
 
-    private bool MarkerMatches(string path, GodotObject godotApp)
+    private bool MarkerMatches(string path)
     {
-        if (!File.Exists(path) || godotApp == null)
+        if (!File.Exists(path) || !PlatformHost.Secrets.Available)
             return false;
-        var json = (string)godotApp.Call("decryptString", File.ReadAllText(path));
+        var json = PlatformHost.Secrets.Decrypt(File.ReadAllText(path));
         if (json == null)
             return false;
         var marker = JsonSerializer.Deserialize<Marker>(json);
         return marker?.Account == _accountName;
-    }
-
-    private static GodotObject GetGodotApp()
-    {
-        try
-        {
-            var jcw = Engine.GetSingleton("JavaClassWrapper");
-            var wrapper = (GodotObject)
-                jcw.Call("wrap", "com.game.sts2launcher.modmanager.GodotApp");
-            return (GodotObject)wrapper.Call("getInstance");
-        }
-        catch
-        {
-            return null;
-        }
     }
 
     private class Marker

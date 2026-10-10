@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- iOS build of the shared launcher sources. Same assembly identity as the
+       Android build; only the references and the STS2_IOS symbol differ. -->
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <AssemblyName>STS2Mobile</AssemblyName>
+    <RootNamespace>STS2Mobile</RootNamespace>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <DefineConstants>$(DefineConstants);STS2_IOS</DefineConstants>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <GenerateDependencyFile>false</GenerateDependencyFile>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../STS2Mobile/**/*.cs" Exclude="../STS2Mobile/bin/**;../STS2Mobile/obj/**" LinkBase="Shared" />
+    <Compile Include="**/*.cs" Exclude="bin/**;obj/**" />
+  </ItemGroup>
+  <ItemGroup>
+    <Reference Include="0Harmony">
+      <HintPath>../../upstream/game-refs/0Harmony.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="GodotSharp">
+      <HintPath>../../upstream/game-refs/GodotSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="sts2">
+      <HintPath>../../upstream/game-refs/sts2.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="SteamKit2" Version="3.4.0" />
+  </ItemGroup>
+</Project>

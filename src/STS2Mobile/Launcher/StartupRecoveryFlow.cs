@@ -255,6 +255,9 @@ internal static class StartupRecoveryFlow
     {
         try
         {
+            // Hosts without the Android debug bridge pass the same switch in the environment.
+            if (System.Environment.GetEnvironmentVariable("STS2_DEBUG_MOD_SAFE_MODE") == "1")
+                return true;
             var app = LauncherModel.GetGodotApp();
             return app != null && (bool)app.Call("consumeDebugModSafeMode");
         }
@@ -272,7 +275,9 @@ internal static class StartupRecoveryFlow
         try
         {
             var app = LauncherModel.GetGodotApp();
-            string value = app == null ? "" : (string)app.Call("consumeDebugModPartition");
+            string value =
+                System.Environment.GetEnvironmentVariable("STS2_DEBUG_MOD_PARTITION")
+                ?? (app == null ? "" : (string)app.Call("consumeDebugModPartition"));
             var parts = value.Split('/');
             return parts.Length == 2
                 && int.TryParse(parts[0], out index)

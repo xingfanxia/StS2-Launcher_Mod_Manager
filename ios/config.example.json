@@ -1,0 +1,6 @@
+{
+  "team_id": "YOUR_APPLE_TEAM_ID",
+  "bundle_id": "dev.yourname.sts2ios",
+  "device": "YOUR_IPAD_COREDEVICE_ID",
+  "profile": false
+}

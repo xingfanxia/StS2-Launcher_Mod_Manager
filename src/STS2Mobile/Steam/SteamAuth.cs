@@ -113,6 +113,42 @@ public class SteamAuth : IDisposable
         return new AuthResult(pollResponse.AccountName, pollResponse.RefreshToken, newGuardData);
     }
 
+    // Signs in by having the Steam mobile app scan a QR code. Steam replaces the
+    // challenge URL periodically; each one is passed to challengeChanged.
+    public async Task<AuthResult> LoginWithQrAsync(
+        Action<string> challengeChanged,
+        CancellationToken cancellation
+    )
+    {
+        if (!_connectedGate.IsSet)
+        {
+            Connect();
+            if (!await WaitForConnectAsync())
+                throw new TimeoutException(
+                    "Could not connect to Steam. Check your internet connection."
+                );
+        }
+
+        Log("Requesting Steam QR sign-in...");
+
+        var authSession = await _client.Authentication.BeginAuthSessionViaQRAsync(
+            new AuthSessionDetails { IsPersistentSession = true }
+        );
+        Log("Steam QR challenge received");
+        authSession.ChallengeURLChanged = () => challengeChanged(authSession.ChallengeURL);
+        challengeChanged(authSession.ChallengeURL);
+
+        var pollResponse = await authSession.PollingWaitForResultAsync(cancellation);
+
+        Log("Steam authentication successful");
+
+        return new AuthResult(
+            pollResponse.AccountName,
+            pollResponse.RefreshToken,
+            pollResponse.NewGuardData
+        );
+    }
+
     internal async Task ReconnectForAuthAsync()
     {
         Log("Reconnecting for auth code submission...");
