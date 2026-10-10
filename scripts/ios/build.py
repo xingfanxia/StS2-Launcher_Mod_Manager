@@ -40,6 +40,9 @@ def config(require_device=False):
     if not path.exists():
         raise SystemExit("Create ios/config.local.json from ios/config.example.json first")
     value = json.loads(path.read_text())
+    # A second device can be targeted without editing the config.
+    if os.environ.get("STS2_IOS_DEVICE"):
+        value["device"] = os.environ["STS2_IOS_DEVICE"]
     for key in (("team_id", "bundle_id", "device") if require_device else ("team_id", "bundle_id")):
         if not isinstance(value.get(key), str) or not re.fullmatch(r"[A-Za-z0-9.-]+", value[key]) or value[key].startswith("YOUR_"):
             raise SystemExit(f"Set a valid {key} in {path}")

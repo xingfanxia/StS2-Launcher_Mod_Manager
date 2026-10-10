@@ -142,12 +142,34 @@ reports the single longest frame). Entering a fight took one frame of about
 - Spine's `mesh_get_surface` call per new mesh read three buffers back from
   the GPU (60 % of that frame in `fence_wait`). Fixed in the engine patch.
 - The game calls `GC.Collect()` after every room load, 50-70 ms under Mono.
-  Dropped on iOS for room loads only (`IosPlatform.DropForcedCollection`).
+  On iOS that call starts a concurrent major collection instead
+  (`sts2_gc_collect_concurrent` in the Mono patch,
+  `IosPlatform.CollectConcurrently`). Removing the call outright was tried
+  first and rejected: over 20 real rooms the footprint grew from 2.8 to 3.9 GB
+  and nursery pauses on the map rose from 23 to 33-42 ms.
 
-After both, the third and fourth fight entry in a session had a longest frame
-of 16-18 ms; footprint stayed at 3.0 GB over four entries. The first entries
-still pay one-time costs (particle shader creation, JSON metadata in a mod,
-JIT) of 40-60 ms.
+With the readback fix and the concurrent collection, the third and fourth
+fight entry in a session had a longest frame of 34 ms, all of it waiting for
+the GPU. The first entries still pay one-time costs (particle shader creation,
+JSON metadata in a mod, JIT) of 40-60 ms.
+
+Round 10 (18 real rooms through the act 1 boss, started without a Mac, before
+the concurrent-collection change): no crash, Spine rendering correct for the
+player and 15 enemy types, repeat room entries at most 67 ms (86-150 ms
+before), average 117.7 fps over 452 windows.
+
+Round 11 (18 more real rooms with the concurrent collection): footprint 3055
+MiB at the menu, 3365 after 9 rooms, 3394 after 18, 3388 back at the menu
+(round 10: 2794, 3487, 3788, 3743). Slow frames attributed to collection fell
+from 568 to 92; one 109 ms collection frame was seen on a shop entry. Nursery
+collections on the map still take about 23 ms each, about twice a second.
+
+Open from round 10:
+
+- The first time some cards are played, one frame takes 260-520 ms (shader
+  pipeline creation three times, JIT once). This is now the largest stall.
+- After "continue" into a reward or map screen the DamageMeter window is
+  missing until the next fight.
 
 ## Starting without a Mac (verified 2026-10-10)
 
@@ -173,8 +195,9 @@ be active, so another VPN is off while LocalDevVPN is connected.
 Android also runs the game on Mono with an engine built from source, so these
 iOS findings probably apply; none was changed for Android in this work.
 
-- `GC.Collect()` after every room load (`PreloadManager.LoadRoomAssets`): the
-  transpiler in `IosPlatform.DropForcedCollection` is platform-neutral.
+- `GC.Collect()` after every room load (`PreloadManager.LoadRoomAssets`):
+  removing it needs a memory check over 15+ real rooms first (see above); the
+  concurrent replacement needs the Mono export.
 - Spine's GPU readback in `mesh_get_surface`: the mesh-storage part of
   `ios/engine/godot-ios.patch` is renderer code shared with Android.
 - Particle systems with very long preprocess times (main-menu clouds, 400 s)

@@ -76,10 +76,14 @@ internal static class IosNative
     private delegate IntPtr CompileCall(IntPtr method);
 
     private static CompileCall _compile;
+    private static VoidCall _collect;
 
     // Compiles a method without running its class constructor. False when it could not be compiled.
     public static bool CompileOnly(RuntimeMethodHandle method) =>
         (_compile ??= Function<CompileCall>("sts2_jit_compile_only"))(method.Value) != IntPtr.Zero;
+
+    // Starts a major collection that marks on a worker thread and returns.
+    public static void CollectConcurrent() => (_collect ??= Function<VoidCall>("sts2_gc_collect_concurrent"))();
 
     // Bytes the app may still take before the system ends it for memory.
     public static long MemoryAvailable() => (long)Function<FootprintCall>("sts2_memory_available")();

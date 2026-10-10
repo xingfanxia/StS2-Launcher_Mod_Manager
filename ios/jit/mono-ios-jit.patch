@@ -387,6 +387,30 @@ index f4869988e..24049e29e 100644
  	} else {
  		code = mono_arm_emit_imm64 (code, ARMREG_IP1, (guint64)arg1);
  		code = mono_arm_emit_imm64 (code, ARMREG_IP0, (guint64)tramp);
+diff --git a/src/mono/mono/sgen/sgen-gc.c b/src/mono/mono/sgen/sgen-gc.c
+index 8ca983771..e0075406b 100644
+--- a/src/mono/mono/sgen/sgen-gc.c
++++ b/src/mono/mono/sgen/sgen-gc.c
+@@ -3232,6 +3232,19 @@ sgen_gc_collect (int generation)
+ 	UNLOCK_GC;
+ }
+ 
++/*
++ * Starts a concurrent major collection and returns after the initial pause.
++ * Does nothing while one is running or when the major collector is serial.
++ */
++__attribute__((visibility("default"))) void
++sts2_gc_collect_concurrent (void)
++{
++	LOCK_GC;
++	if (sgen_major_collector.is_concurrent && !sgen_concurrent_collection_in_progress)
++		sgen_perform_collection (0, GENERATION_OLD, "sts2 request", FALSE, TRUE);
++	UNLOCK_GC;
++}
++
+ int
+ sgen_gc_collection_count (int generation)
+ {
 diff --git a/src/mono/mono/utils/mono-codeman.c b/src/mono/mono/utils/mono-codeman.c
 index 26f8715c6..ec9599e74 100644
 --- a/src/mono/mono/utils/mono-codeman.c

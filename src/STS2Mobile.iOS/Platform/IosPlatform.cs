@@ -289,15 +289,16 @@ internal static class IosPlatform
         }
 
         // The game forces a full blocking collection after every room load. Under
-        // Mono that stops the frame for 50-70 ms on each room change. The runtime
-        // still collects on its own, and the act and run loads keep their collection.
+        // Mono that stops the frame for 50-70 ms on each room change, so that one
+        // becomes a concurrent collection. Skipping it instead let the footprint
+        // grow by about 1.1 GB over 20 rooms. Act and run loads keep the blocking one.
         try
         {
             var loadRoom = HarmonyLib.AccessTools.Method(
                 typeof(MegaCrit.Sts2.Core.Assets.PreloadManager), "LoadRoomAssets");
             _harmony.Patch(
                 HarmonyLib.AccessTools.AsyncMoveNext(loadRoom),
-                transpiler: new HarmonyLib.HarmonyMethod(typeof(IosPlatform), nameof(DropForcedCollection))
+                transpiler: new HarmonyLib.HarmonyMethod(typeof(IosPlatform), nameof(CollectConcurrently))
             );
             PatchHelper.Log("Patched PreloadManager.LoadRoomAssets (iOS)");
         }
@@ -346,24 +347,23 @@ internal static class IosPlatform
 
     private static bool SkipCall() => false;
 
-    private static System.Collections.Generic.IEnumerable<HarmonyLib.CodeInstruction> DropForcedCollection(
+    private static System.Collections.Generic.IEnumerable<HarmonyLib.CodeInstruction> CollectConcurrently(
         System.Collections.Generic.IEnumerable<HarmonyLib.CodeInstruction> instructions)
     {
         var collect = HarmonyLib.AccessTools.Method(typeof(GC), nameof(GC.Collect), Type.EmptyTypes);
-        var dropped = 0;
+        var replaced = 0;
         foreach (var instruction in instructions)
         {
             if (HarmonyLib.CodeInstructionExtensions.Calls(instruction, collect))
             {
-                // Keep labels and exception blocks that were attached to the call.
-                instruction.opcode = System.Reflection.Emit.OpCodes.Nop;
-                instruction.operand = null;
-                dropped++;
+                // Same instruction object, so labels and exception blocks stay attached.
+                instruction.operand = HarmonyLib.AccessTools.Method(typeof(IosNative), nameof(IosNative.CollectConcurrent));
+                replaced++;
             }
             yield return instruction;
         }
-        if (dropped != 1)
-            PatchHelper.Log($"[Memory] Expected one forced collection in LoadRoomAssets, found {dropped}");
+        if (replaced != 1)
+            PatchHelper.Log($"[Memory] Expected one forced collection in LoadRoomAssets, found {replaced}");
     }
 
     private static void MaxFpsPrefix(ref int value)
